@@ -1,0 +1,57 @@
+# clang-format 配置
+#
+# 排版风格基于 LLVM，但**缩进宽度用 4 而不是 LLVM 的 2**。
+#
+# 为什么不全用 LLVM：
+#   本项目原本就是 4 空格缩进。改缩进宽度会产生**整个代码库的 diff**，
+#   把「重命名」这件事淹没在格式噪音里 —— review 时看不出实际改了什么。
+#   排版和命名是两件事，LLVM 自己也是分开管的。
+#
+#   所以这里只统一**指针/引用对齐**和**列宽**这类不会淹没 diff 的部分，
+#   缩进保持现状。
+#
+# 用法：
+#   clang-format -i modules/ccap_core/core/*.cpp
+#
+# 注意：项目**不强制**跑 clang-format（只强制命名，见 .clang-tidy）。
+#   排版改动会产生大量无意义 diff，收益低。
+
+BasedOnStyle: LLVM
+
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+
+ColumnLimit: 80
+
+# 指针 / 引号贴着变量名（LLVM 风格）：
+#   const char *ptr  ->  const char *ptr
+PointerAlignment: Right
+DerivePointerAlignment: false
+ReferenceAlignment: Pointer
+
+# 缩进 case 标签（switch 里 case 与 switch 对齐）
+IndentCaseLabels: false
+IndentCaseBlocks: false
+
+# 允许短函数在同一行（clang 大量使用）
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+AllowShortBlocksOnASingleLine: false
+
+# 不动 include 顺序（我们自己按"同目录 -> 其它库 -> std"排）
+SortIncludes: false
+
+# 注释不重排（中文注释的缩进很敏感）
+ReflowComments: false
+
+# 不拆开长字符串
+BreakStringLiterals: false
+
+# 预处理指令缩进
+IndentPPDirectives: None
+
+# 保留构造函数初始化列表的对齐
+ConstructorInitializerIndentWidth: 4
+PackConstructorInitializers: NextLine

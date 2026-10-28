@@ -1,0 +1,54 @@
+# Line endings
+#
+# Why this file exists:
+#   Git's default on Windows (core.autocrlf=true) checks out .sh files with
+#   CRLF, and a CRLF shell script dies on the *first* line it executes:
+#
+#     line 13: set: -: invalid option
+#     line 16: $'\r': command not found
+#     line 17: cd: $'...CommandCapture\r': No such file or directory
+#
+#   It never runs a single assertion -- it just dies before producing any
+#   output, so it looks like "the test suite failed" rather than "the file
+#   has the wrong line endings".
+#
+#   We hit exactly that: a Python edit script rewrote a .sh file with the
+#   platform default separator, which on Windows is CRLF.
+#
+# So the line endings are pinned per file type instead of relying on a
+# global setting.
+
+# ── Shell scripts: always LF, on every platform ───────────────────────
+*.sh text eol=lf
+
+# ── Sources: LF in the repository, native on checkout ─────────────────
+*.c      text
+*.h      text
+*.cpp    text
+*.hpp    text
+*.py     text
+*.md     text
+*.txt    text
+*.json   text
+*.yml    text
+*.yaml   text
+
+# ── Windows-native scripts and projects: CRLF ─────────────────────────
+*.bat    text eol=crlf
+*.cmd    text eol=crlf
+*.ps1    text eol=crlf
+*.csproj text eol=crlf
+*.proj   text eol=crlf
+*.sln    text eol=crlf
+Makefile text eol=lf
+
+# ── Binary: never touched ─────────────────────────────────────────────
+*.exe    binary
+*.dll    binary
+*.so     binary
+*.lib    binary
+*.a      binary
+*.obj    binary
+*.o      binary
+*.pdb    binary
+*.ilk    binary

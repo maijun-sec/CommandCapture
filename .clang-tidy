@@ -1,0 +1,246 @@
+# clang-tidy 配置
+#
+# 命名规则见 docs/NAMING-CONVENTION.md
+#
+# 关键：**每一条 kind 都要显式配置**。
+#
+# clang-tidy 的 `readability-identifier-naming` 有个坑：
+# 某个 kind 没配规则时，它**不检查那一类** ——
+# 跑完"没报错"可能只是"没检查"。
+# 所以这里的规则必须**全而显**，不能只配一部分。
+#
+# 验证配置真的在检查（而不是在空转）：
+#   故意写一个 `void Bad_Name();`，看它报不报。
+#
+# 用法：
+#   clang-tidy -p build modules/ccap_core/core/command_parser.cpp
+
+Checks: >
+  -*,
+  readability-identifier-naming
+
+# 只检查**我们自己的**文件。
+#
+# 为什么必须限制：
+#   MSVC / Windows SDK 的头文件本身有 2 万多条命名警告
+#   （ExitStatus、BasePriority 这些是 NT ABI 的固定名字，改不得）。
+#   不限制的话，真正的违规会被淹没在噪音里 ——
+#   门禁就退化成了"永远红"或"永远绿"，两个都没用。
+#
+# 写成"排除系统目录"而不是"只包含 modules/"：
+#   这样别人加的模块目录也能自动被检查到。
+HeaderFilterRegex: '^(?!.*(Windows Kits|VC\\Tools|include\\)).*$'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 命名规则
+#
+# 注意配置格式：clang-tidy 的选项必须写在 **CheckOptions** 这个
+# 列表里，每一项是「选项名: 值」的 map。
+#
+# 写成顶层 key（比如 `readability-identifier-naming:` 后面直接跟
+# `ClassCase: CamelCase`）会被报 "unknown key" —— 因为顶层只认
+# `Checks` / `CheckOptions` / `WarningsAsErrors` 这几个。
+# ─────────────────────────────────────────────────────────────────────────────
+CheckOptions:
+  # ── 类型 -> PascalCase ─────────────────────────────────────────────────
+  - key: readability-identifier-naming.ClassCase
+    value: CamelCase
+  - key: readability-identifier-naming.StructCase
+    value: CamelCase
+  - key: readability-identifier-naming.UnionCase
+    value: CamelCase
+  - key: readability-identifier-naming.EnumCase
+    value: CamelCase
+  - key: readability-identifier-naming.EnumConstantCase
+    value: CamelCase
+  - key: readability-identifier-naming.ScopedEnumConstantCase
+    value: CamelCase
+  - key: readability-identifier-naming.TypedefCase
+    value: CamelCase
+  - key: readability-identifier-naming.TypeAliasCase
+    value: CamelCase
+  - key: readability-identifier-naming.TemplateParameterCase
+    value: CamelCase
+  - key: readability-identifier-naming.TemplateTemplateParameterCase
+    value: CamelCase
+  - key: readability-identifier-naming.TypeTemplateParameterCase
+    value: CamelCase
+  - key: readability-identifier-naming.ValueTemplateParameterCase
+    value: CamelCase
+  - key: readability-identifier-naming.ConceptCase
+    value: CamelCase
+  - key: readability-identifier-naming.AbstractClassCase
+    value: CamelCase
+
+  # ── 函数 -> camelBack ──────────────────────────────────────────────────
+  - key: readability-identifier-naming.FunctionCase
+    value: camelBack
+  - key: readability-identifier-naming.MethodCase
+    value: camelBack
+  - key: readability-identifier-naming.PrivateMethodCase
+    value: camelBack
+  - key: readability-identifier-naming.ProtectedMethodCase
+    value: camelBack
+  - key: readability-identifier-naming.PublicMethodCase
+    value: camelBack
+  - key: readability-identifier-naming.VirtualMethodCase
+    value: camelBack
+  - key: readability-identifier-naming.StaticFunctionCase
+    value: camelBack
+  - key: readability-identifier-naming.ConstexprFunctionCase
+    value: camelBack
+  - key: readability-identifier-naming.ConstexprMethodCase
+    value: camelBack
+  - key: readability-identifier-naming.ConstexprVariableCase
+    value: camelBack
+  - key: readability-identifier-naming.GlobalFunctionCase
+    value: camelBack
+
+  # ── 变量 / 参数 -> camelBack ───────────────────────────────────────────
+  - key: readability-identifier-naming.LocalVariableCase
+    value: camelBack
+  - key: readability-identifier-naming.LocalPointerParameterCase
+    value: camelBack
+  - key: readability-identifier-naming.LocalConstantPointerCase
+    value: camelBack
+  - key: readability-identifier-naming.LocalConstantCase
+    value: camelBack
+  - key: readability-identifier-naming.ParameterCase
+    value: camelBack
+  - key: readability-identifier-naming.PointerParameterCase
+    value: camelBack
+  - key: readability-identifier-naming.ParameterPackCase
+    value: camelBack
+  - key: readability-identifier-naming.MemberCase
+    value: camelBack
+  - key: readability-identifier-naming.PrivateMemberCase
+    value: camelBack
+  # 私有成员保留尾部下划线（clang 的惯例：`_` 表示非公开成员）。
+  #
+  # 没有这一条的话，`member_` 会被判成 "invalid case style" ——
+  # 因为尾部的 `_` 让它不再是纯 camelBack。
+  - key: readability-identifier-naming.PrivateMemberSuffix
+    value: '_'
+  - key: readability-identifier-naming.ProtectedMemberCase
+    value: camelBack
+  - key: readability-identifier-naming.PublicMemberCase
+    value: camelBack
+  - key: readability-identifier-naming.VariableCase
+    value: camelBack
+  - key: readability-identifier-naming.GlobalVariableCase
+    value: camelBack
+  - key: readability-identifier-naming.GlobalConstantCase
+    value: camelBack
+  - key: readability-identifier-naming.GlobalPointerCase
+    value: camelBack
+  - key: readability-identifier-naming.StaticVariableCase
+    value: camelBack
+  - key: readability-identifier-naming.StaticConstantCase
+    value: camelBack
+  - key: readability-identifier-naming.ConstantCase
+    value: camelBack
+  - key: readability-identifier-naming.ConstantMemberCase
+    value: camelBack
+  - key: readability-identifier-naming.ConstantParameterCase
+    value: camelBack
+  - key: readability-identifier-naming.ConstantPointerParameterCase
+    value: camelBack
+
+  # ── 命名空间 ────────────────────────────────────────────────────────────
+  #
+  # 命名空间用 **小写**（不是 PascalCase）。
+  #
+  # LLVM 的 `llvm` / `clang` / `mlir` 都是小写 —— 因为它们是**首字母缩写**，
+  # 不是普通单词。本项目的 `ccap` 同理。
+  #
+  # 所以这里用 lower_case + 白名单式忽略（正则匹配纯小写命名空间）。
+  - key: readability-identifier-naming.NamespaceCase
+    value: lower_case
+  - key: readability-identifier-naming.InlineNamespaceCase
+    value: lower_case
+  - key: readability-identifier-naming.NamespaceIgnoredRegexp
+    value: '^[a-z][a-z0-9]*$'
+
+  # ── 宏 -> UPPER_CASE ───────────────────────────────────────────────────
+  - key: readability-identifier-naming.MacroDefinitionCase
+    value: UPPER_CASE
+
+  # ── Windows NT API 的结构体字段 ────────────────────────────────────────
+  #
+  # 这些字段精确镜像 ntdll 的 PROCESS_BASIC_INFORMATION /
+  # THREAD_BASIC_INFORMATION 内存布局。
+  #
+  # 改名不影响布局（字段名对 ABI 没影响），但会**误导读者**：
+  # 看到 `exitStatus` 会以为这是我们自己定义的类型，
+  # 而实际上它必须和 ntdll 的 `ExitStatus` 一一对应才能正确解析。
+  #
+  # 换句话说：这些名字的"风格错误"是**故意的**，
+  # 因为它们在表达"这就是 ntdll 的那个结构体"。
+  #
+  # 注意用的是 PublicMemberIgnoredRegexp —— clang-tidy 把 **struct 的字段**
+  # 也归到 "public member" 这一类（不是 "struct member"）。
+  #
+  # 这里豁免的是 **Windows NT API 的结构体字段** + **C ABI 结构体的字段名**。
+  #
+  # C ABI 那一侧（ccap_run_options）整体保持 snake_case（见下面「C ABI 的类型名」一节），
+  # 它的字段名是**对外契约**，改不得。
+  #
+  # ⚠️ 注意：内部的 C++ 结构体（ccap::RunOptions / cli::Options）**不在**这个豁免里 ——
+  # 它们不是 ABI，应该跟 C++ 侧统一用 camelBack。
+  # 早期版本把两者的字段名混在同一个豁免列表里，结果内部结构体也一直没改名，
+  # 等于用"豁免"掩盖了"没改"。
+  - key: readability-identifier-naming.PublicMemberIgnoredRegexp
+    value: '^(AffinityMask|BasePriority|ExitStatus|InheritedFromUniqueProcessId|PebBaseAddress|TebBaseAddress|UniqueProcessId|ClientId|Priority|ThreadState|SuspendCount|WaitReason|scan_script|script_recursive|script_depth|timeout_ms|quiet_ms|clear_being_debugged|redirect_output_to_stderr)$'
+  - key: readability-identifier-naming.TypedefIgnoredRegexp
+    value: '^_?CCAP_(PROCESS|THREAD)_BASIC_INFORMATION$'
+  - key: readability-identifier-naming.StructIgnoredRegexp
+    value: '^_?CCAP_(PROCESS|THREAD)_BASIC_INFORMATION$'
+
+  # ── C ABI 的类型名 / 枚举值 ───────────────────────────────────────────
+  #
+  # C ABI 是**对外契约** —— 改了就是破坏兼容。
+  # LLVM 的 clang-c API 也是这样（clang_createIndex / CXIndex / CXCursor）。
+  #
+  # 所以 C ABI 这一侧**整体**保持 snake_case，
+  # 不跟 C++ 侧的 camelBack 规则统一 —— 两边本来就是两套语言、两套惯例。
+  #
+  # 保护的不只是函数名：**类型名和枚举值同样是 ABI 的一部分**。
+  # 只保护函数名是不够的 —— 改掉 `ccap_session` 一样是破坏 ABI。
+  - key: readability-identifier-naming.TypeAliasIgnoredRegexp
+    value: '^(ccap_[a-z0-9_]*)$'
+  - key: readability-identifier-naming.ScopedEnumConstantIgnoredRegexp
+    value: '^CCAP_[A-Z0-9_]*$'
+
+  # ── 名字本身就是 ABI 的函数 ───────────────────────────────────────────
+  #
+  # shim 拦截的是 **glibc 的符号**，所以它导出的名字必须和 glibc 一模一样：
+  #   execve / execv / execvp / execvpe / execle / fexecve / execveat
+  #   posix_spawn / posix_spawnp
+  #
+  # 之前的一次批量改名把 `posix_spawn` 改成了 `posixSpawn` ——
+  # shim 于是导出 `posixSpawn`，glibc 的 `posix_spawn` 根本没被拦截，
+  # 而 GNU make 优先走 posix_spawn，于是 make 的子进程**一个都抓不到**。
+  #
+  # **这类"函数名本身就是 ABI"的地方改名 = 静默失效。**
+  # 所以它们必须豁免，并且由符号表断言守住
+  # （tests/run_tests_linux_depth.sh 的 "shim 导出正确的符号" 一节）。
+  - key: readability-identifier-naming.FunctionIgnoredRegexp
+    value: '^(ccap_[a-z0-9_]*|execve|execv|execvp|execvpe|execle|fexecve|execveat|posix_spawn|posix_spawnp)$'
+  - key: readability-identifier-naming.GlobalFunctionIgnoredRegexp
+    value: '^(ccap_[a-z0-9_]*|execve|execv|execvp|execvpe|execle|fexecve|execveat|posix_spawn|posix_spawnp)$'
+  # 宏：我们的用 UPPER_CASE；系统宏（_GNU_SOURCE）不归我们管
+  - key: readability-identifier-naming.MacroDefinitionIgnoredRegexp
+    value: '^(CCAP_[A-Z0-9_]*|_GNU_SOURCE)$'
+
+  # ── 形参名必须和 POSIX 原型一致 ────────────────────────────────────────
+  #
+  # `posix_spawn` 的 `file_actions` 形参名直接照抄 POSIX 规范 ——
+  # 这样一眼就能和 `man 3 posix_spawn` 对上。
+  - key: readability-identifier-naming.PointerParameterIgnoredRegexp
+    value: '^(file_actions)$'
+  - key: readability-identifier-naming.ParameterIgnoredRegexp
+    value: '^(file_actions)$'
+
+  # main 及其参数不检查
+  - key: readability-identifier-naming.IgnoreMainLikeFunctions
+    value: true

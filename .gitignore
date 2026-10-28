@@ -1,0 +1,46 @@
+# 构建产物
+build/
+build-linux/
+build-linux2/
+build-linux-clean/
+build-ninja/
+build-probes/
+build32/
+cmake-build-*/
+out/
+.vs/
+.vscode/
+.idea/
+
+# 测试 fixture 里 cmake/msbuild 生成的中间产物
+tests/fixtures/**/build/
+tests/fixtures/**/obj/
+tests/fixtures/**/bin/
+
+# C# 原型的构建产物
+prototypes/**/bin/
+prototypes/**/obj/
+
+# 编译中间产物
+*.obj
+*.o
+*.ilk
+*.pdb
+*.exe
+*.so
+*.dll
+*.lib
+*.a
+
+# 临时文件
+*.log
+*.tmp
+*.bak
+.trash/
+
+# 编译数据库（由 CMAKE_EXPORT_COMPILE_COMMANDS 生成）
+compile_commands.json
+
+# Python 缓存
+__pycache__/
+*.pyc

@@ -1,0 +1,22 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Windows 调试器 API 命令捕获原型。
+    两个入口点：
+      DbgProbe5  -> DEBUG_PROCESS 整树捕获（主原型）
+      DbgProbe4  -> DebugActiveProcess 对照组（只抓一个进程）
+    用法见 README.md
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>disable</Nullable>
+    <AssemblyName>DbgProbe</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <StartupObject>DbgProbe5</StartupObject>
+    <NoWarn>CS0168;CS0219;CS0649</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="DbgProbe5.cs" />
+    <Compile Include="DbgProbe4.cs" />
+  </ItemGroup>
+</Project>
