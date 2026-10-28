@@ -75,6 +75,9 @@ SOURCE_GLOBS = [
     "tests/**/*.ps1",
     "tests/**/*.sh",
     "prototypes/**/*.cs",
+    "tools/**/*.py",
+    "tools/**/*.sh",
+    "tools/**/*.ps1",
 ]
 
 # Files that are deliberately excluded, with the reason.

@@ -984,6 +984,11 @@ VS 生成器不产 `compile_commands.json`，脚本会**自动生成一个 sibli
 > 共享库输出目录**必须和静态库分开** —— MSVC 的 import lib 也叫 `<name>.lib`，
 > 放一起会覆盖同名静态库（曾经因此链不到 `run_capture`）。
 
+> `tools/git-push.sh` 是**可选的本机辅助脚本**，不是项目的一部分，
+> 构建和测试都不需要它。它只在你的网络到 GitHub 不稳时才有用
+> （见[坑 29](#29-httpcurloptresolve-会被静默忽略)）。
+> 网络正常时直接用 `git push` 就行。
+
 ### Windows 采集原理
 
 ```
@@ -1649,6 +1654,35 @@ lost = old_lits - new_lits
 
 **Lesson —— 一个豁免规则要能回答："我为什么豁免这个？"
 答不上来，就是它在替你掩盖问题。**
+
+### 29. `http.curloptResolve` 会被**静默忽略**
+
+本机到 GitHub 的路由不稳：DNS 给出的 `20.205.243.166` 会
+"Connection refused"。换 IP 是标准解法 —— 但标准解法本身有个坑。
+
+git 把 `http.curloptResolve` 映射到 libcurl 的 `CURLOPT_RESOLVE`，
+**是否真的生效取决于 git/libcurl 的构建**：
+
+| git | 结果 |
+|---|---|
+| 2.40（Windows） | ✅ 生效，`Trying 140.82.112.3:443` |
+| 2.34（Linux/WSL） | ❌ **静默忽略**，仍然 `Trying 20.205.243.166:443` |
+
+用 `GIT_TRACE_CURL=1` 一看就知道：
+
+```bash
+GIT_TRACE_CURL=1 git -c http.curloptResolve=github.com:443:140.82.112.3 ls-remote
+```
+
+**被静默忽略的设置是最坏的一种**：命令有时会成功，看起来"在起作用"，
+于是你一直在跟一个根本没生效的旋钮搏斗。本机最初 900 秒超时的
+`push` 就是这么来的。
+
+**Lesson —— 任何"绕过 DNS"的设置都要先验证它真的生效，
+而不是假设它生效。** 判据是 trace 里那个地址是不是你指定的那个。
+
+`tools/git-push.sh` 把这条检查写进去了：先用 trace 确认当前 git
+**能**接受这个设置，再逐个候选 IP 重试，全都失败才退回裸 git。
 
 ---
 
