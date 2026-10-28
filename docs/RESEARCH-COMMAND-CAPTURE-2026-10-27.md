@@ -35,8 +35,8 @@
 初版结论是"Windows 用 ETW + Detours 补齐"。用户指出**拿不到管理员权限**，
 促使我去查**商业静态分析工具的现成做法**。查到的东西分两半：
 
-**这类工具在 Windows 上根本不用 hook，用的是调试器 API。** 官方文档原文
-（[Black Duck Docs - Windows](https://docs.blackduck.com/blackduck/2026.3/coverity-documentation/windows.html)）：
+**这类工具在 Windows 上根本不用 hook，用的是调试器 API。** 商业静态分析工具的
+官方文档（Windows 平台说明）原文：
 
 > "The cov-build command uses a **different mechanism** to capture compiler process creation on Windows than on UNIX platforms. The **Windows version of cov-build runs the build command and its child processes in debug mode.**"
 
@@ -168,7 +168,7 @@ L2 是 LD_PRELOAD / Detours / ETW 的主战场。**L1 只能靠解析脚本源�
 
 **这类工具在 Windows 上用的是调试器 API，不是 Detours。**
 
-官方文档（[Black Duck Docs - Windows](https://docs.blackduck.com/blackduck/2026.3/coverity-documentation/windows.html)）原文：
+官方文档（Windows 平台说明）原文：
 
 > "The cov-build command uses a different mechanism to capture compiler process creation on Windows than on UNIX platforms. **The Windows version of cov-build runs the build command and its child processes in debug mode.** If your build system has problems running in debug mode, try using the `--instrument` option with `cov-build`."
 
@@ -352,7 +352,7 @@ WOW64 双 PEB 的复杂度而容易出问题。
 `--clear-being-debugged`（默认关闭）作为缓解手段；
 **不实现** wrapper 式捕获 —— 因为它满足不了"所有命令"这个需求。
 
-> 参考：<https://docs.blackduck.com/blackduck/2026.3/coverity-documentation/windows.html>
+> 参考：商业静态分析工具的 Windows 平台官方文档（调试器模式说明），
 > 以及 <https://sig-synopsys.my.site.com/community/s/article/Improving-Build-and-Analysis-Time>
 > （`--instrument` 与 `--parallel-emit` 互斥的说明）
 
@@ -895,7 +895,7 @@ logman create trace CCProbe -p "Microsoft-Windows-Kernel-Process" 0x10 4 -o C:\c
 **Windows**
 - Microsoft Detours：https://github.com/microsoft/Detours
 - CreateProcessW：https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw
-- **官方文档（Windows 调试器模式 / `--instrument` 备选路径）**：https://docs.blackduck.com/blackduck/2026.3/coverity-documentation/windows.html
+- **商业静态分析工具官方文档（Windows 调试器模式 / `--instrument` 备选路径）**：产品文档站点的 Windows 平台说明页
 - Windows 调试器 API（DEBUG_PROCESS vs DEBUG_ONLY_THIS_PROCESS）：https://msdn.microsoft.com/zh-tw/ms809754
 - ETW 内核 provider（GUID / keyword 表，已排除）：https://justruss.tech/index.php/2025/08/05/seond-blog
 - 进程创建 API Hook 矩阵：https://blog.csdn.net/qq_59075481/article/details/128814911
