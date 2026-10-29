@@ -17,7 +17,7 @@ import pathlib
 import re
 import sys
 
-ROOT = pathlib.Path(r"D:\work\workspace\visualstudio\CommandCapture")
+ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 CJK = re.compile(r"[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]")
 

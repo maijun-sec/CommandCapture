@@ -28,7 +28,7 @@ import pathlib
 import re
 import sys
 
-ROOT = pathlib.Path(r"D:\work\workspace\visualstudio\CommandCapture")
+ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 PAIRS = [
     # Two em dashes. In Chinese typography a double dash separates a
