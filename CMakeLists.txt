@@ -369,7 +369,7 @@ endif()
 # 命名规范门禁
 #
 # tests/check_naming.py 用 clang-tidy 的 readability-identifier-naming
-# 检查命名规范（见 docs/NAMING-CONVENTION.md）。
+# 检查命名规范（见 docs/zh/NAMING-CONVENTION.md，英文版 docs/en/NAMING-CONVENTION.md）。
 #
 # 为什么值得纳入 CTest：
 #   之前它只能手工跑 —— 意味着**没人会跑它**，CI 里也不会跑。
@@ -423,9 +423,46 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(license PROPERTIES
     SKIP_RETURN_CODE 2
     TIMEOUT 300)
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 文档双语门禁
+  #
+  # 每个文档都有中英文两个版本。翻译很容易悄悄走样：少一段、表格少一行、
+  # 代码块少一个、链接指向不存在的文件 —— 这些都不会报错，只是让两份文档
+  # 慢慢变得不是同一份东西。
+  #
+  # 两条检查：
+  #   check_docs_i18n.py         两份的结构必须一致（标题层级、表格、代码块、
+  #                              引用段落数），且每条相对链接都要能解析
+  #   check_docs_translation.py  英文版正文里不许残留未翻译的中文
+  #
+  # 退出码：
+  #   0 = 通过
+  #   1 = 两份文档结构不一致，或英文版有漏译
+  #   2 = 找不到文档（路径不对）—— 无法检查
+  #
+  # 为什么合并成一条测试：
+  #   两个检查回答的是同一个问题（"两份文档是不是同一份东西"），
+  #   分成两条只会让失败原因分散在两处。
+  # ───────────────────────────────────────────────────────────────────────────
+  add_test(NAME docs_i18n
+    COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_docs_i18n.py")
+  set_tests_properties(docs_i18n PROPERTIES
+    SKIP_RETURN_CODE 2
+    TIMEOUT 300)
+
+  add_test(NAME docs_translation
+    COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_docs_translation.py")
+  set_tests_properties(docs_translation PROPERTIES
+    SKIP_RETURN_CODE 2
+    TIMEOUT 300)
 else()
   message(STATUS "Python3 not found - the naming gate test will not be added")
   message(STATUS "Python3 not found - the license gate test will not be added")
+  message(STATUS "Python3 not found - the docs i18n gate test will not be added")
+  message(STATUS "Python3 not found - the docs translation gate test will not be added")
 endif()
 
 # ─────────────────────────────────────────────────────────────────────────────

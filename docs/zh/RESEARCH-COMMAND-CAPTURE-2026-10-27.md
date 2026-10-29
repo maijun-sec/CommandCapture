@@ -1,5 +1,9 @@
 ﻿# CommandCapture 调研报告：跨平台脚本/构建命令捕获
 
+<!-- i18n:begin -->
+[**English**](../en/RESEARCH-COMMAND-CAPTURE-2026-10-27.md) | 中文
+<!-- i18n:end -->
+
 **日期**: 2026-10-27（**v2 修订**：Windows 路径改为调试器 API 方案，附本机实测）
 **范围**: 调研 Linux 与 Windows 两类命令捕获机制，评估"传入一个脚本、捕获其直接或间接拉起的所有命令"的可行性
 **结论摘要**: 可行。**Linux 用 `LD_PRELOAD`，Windows 用调试器 API（`DEBUG_PROCESS`）**——两者都**不需要管理员权限**。两平台技术路径不能对称设计。
@@ -8,7 +12,7 @@
 > ——删掉引用，结论就没法复核了。所以本文档保留这些名字。
 >
 > 但**产品代码、测试和面向使用者的文档**里已经没有它们了
-> （见 `README.md` 和 `docs/DESIGN-MODULES-2026-10-27.md`）。
+> （见 `README.md` 和 `docs/zh/DESIGN-MODULES-2026-10-27.md`）。
 > 代码里唯一保留的是**日志里真实出现的前端 wrapper 名**
 > ——但连这一项也改成了**工具无关的通用写法**（`sa-translate` / `tool-emit` / ...），
 > 因为解析器要认的是**"编译器前面套了一层 wrapper"这个形状**，不是某一个厂商的拼法。

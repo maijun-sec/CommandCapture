@@ -1,5 +1,9 @@
 ﻿# CommandCapture
 
+<!-- i18n:begin -->
+[**English**](README.en.md) | 中文
+<!-- i18n:end -->
+
 捕获一个脚本（或可执行文件）**直接或间接拉起的所有命令**，输出结构化的进程树。
 
 跨平台（Windows / Linux），零第三方依赖，单文件可执行程序。
@@ -74,7 +78,7 @@ $ ccap run mixed.bat --no-scan --format text
 任何工具想覆盖内建命令，都必须有静态分析这一层。
 
 完整推导和边界（变量展开、`for` 循环、动态构造）见
-[`docs/RESEARCH-COMMAND-CAPTURE-2026-10-27.md`](docs/RESEARCH-COMMAND-CAPTURE-2026-10-27.md) §4.0。
+[`docs/zh/RESEARCH-COMMAND-CAPTURE-2026-10-27.md`](docs/zh/RESEARCH-COMMAND-CAPTURE-2026-10-27.md) §4.0。
 
 ---
 
@@ -801,7 +805,7 @@ Get-Date -Format o                     ← 子表达式里真的被调用的命�
 | **树视图完整性** | ✅ 每个运行时事件**恰好渲染一次**（孙进程不再消失） |
 
 > Windows 采集原理（为什么用调试器 API 而不是 Detours）详见
-> [`docs/WINDOWS-CAPTURE-PRINCIPLE-2026-10-27.md`](docs/WINDOWS-CAPTURE-PRINCIPLE-2026-10-27.md)。
+> [`docs/zh/WINDOWS-CAPTURE-PRINCIPLE-2026-10-27.md`](docs/zh/WINDOWS-CAPTURE-PRINCIPLE-2026-10-27.md)。
 
 ### Linux（Ubuntu under WSL2）
 
@@ -892,7 +896,7 @@ modules/
 
 ### 命名规范（参考 LLVM / clang）
 
-完整规则见 [`docs/NAMING-CONVENTION.md`](docs/NAMING-CONVENTION.md)。
+完整规则见 [`docs/zh/NAMING-CONVENTION.md`](docs/zh/NAMING-CONVENTION.md)。
 
 | 类别 | 风格 | 例子 |
 |---|---|---|
@@ -1807,16 +1811,21 @@ cmake -S . -B build -DCCAP_BUILD_PROBES=ON
 
 ## 相关文档
 
-- [`docs/RESEARCH-COMMAND-CAPTURE-2026-10-27.md`](docs/RESEARCH-COMMAND-CAPTURE-2026-10-27.md)
-  —— 方案调研：Windows Detours / ETW / 调试器 API / Linux LD_PRELOAD / seccomp 的对比，
+每份文档都有中英文两个版本，页面顶部可以切换。
+
+| 文档 | 中文 | English |
+|---|---|---|
+| 方案调研 | [`docs/zh/RESEARCH-COMMAND-CAPTURE-2026-10-27.md`](docs/zh/RESEARCH-COMMAND-CAPTURE-2026-10-27.md) | [`docs/en/RESEARCH-COMMAND-CAPTURE-2026-10-27.md`](docs/en/RESEARCH-COMMAND-CAPTURE-2026-10-27.md) |
+| 模块化设计 | [`docs/zh/DESIGN-MODULES-2026-10-27.md`](docs/zh/DESIGN-MODULES-2026-10-27.md) | [`docs/en/DESIGN-MODULES-2026-10-27.md`](docs/en/DESIGN-MODULES-2026-10-27.md) |
+| Windows 采集原理 | [`docs/zh/WINDOWS-CAPTURE-PRINCIPLE-2026-10-27.md`](docs/zh/WINDOWS-CAPTURE-PRINCIPLE-2026-10-27.md) | [`docs/en/WINDOWS-CAPTURE-PRINCIPLE-2026-10-27.md`](docs/en/WINDOWS-CAPTURE-PRINCIPLE-2026-10-27.md) |
+| 命名规范 | [`docs/zh/NAMING-CONVENTION.md`](docs/zh/NAMING-CONVENTION.md) | [`docs/en/NAMING-CONVENTION.md`](docs/en/NAMING-CONVENTION.md) |
+
+- **方案调研** —— Windows Detours / ETW / 调试器 API / Linux LD_PRELOAD / seccomp 的对比，
   以及为什么最终选了「调试器 API + LD_PRELOAD + 静态分析」这个组合。
-- [`docs/DESIGN-MODULES-2026-10-27.md`](docs/DESIGN-MODULES-2026-10-27.md)
-  —— 模块化设计：四个模块的职责边界、依赖方向、C ABI 契约、compdb 架构。
-- [`docs/WINDOWS-CAPTURE-PRINCIPLE-2026-10-27.md`](docs/WINDOWS-CAPTURE-PRINCIPLE-2026-10-27.md)
-  —— Windows 采集原理：`DEBUG_PROCESS` 调试器 API 的机制、PEB 读取、
+- **模块化设计** —— 四个模块的职责边界、依赖方向、C ABI 契约、compdb 架构。
+- **Windows 采集原理** —— `DEBUG_PROCESS` 调试器 API 的机制、PEB 读取、
   WOW64 双 PEB，以及**为什么不用 Detours / ETW / WMI** 的逐项对比。
-- [`docs/NAMING-CONVENTION.md`](docs/NAMING-CONVENTION.md)
-  —— 命名规范（参考 LLVM / clang）：各类标识符的风格、C API 为什么保持 snake_case、
+- **命名规范** —— 各类标识符的风格、C API 为什么保持 snake_case、
   以及哪些名字**不能**跟着风格一起改（ABI 契约）。
 - [`prototypes/windows-debugproc/`](prototypes/windows-debugproc/)
   —— C# 机制验证原型（证明非管理员环境下 `DEBUG_PROCESS` 能捕获三层进程树）。

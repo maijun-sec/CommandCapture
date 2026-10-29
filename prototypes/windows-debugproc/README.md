@@ -1,5 +1,12 @@
 # Windows 调试器 API 命令捕获原型
 
+<!-- i18n:begin -->
+[**English**](README.en.md) | 中文
+<!-- i18n:end -->
+
+
+
+
 本目录是调研期写的验证代码，用于确认 **Windows 调试器 API（DEBUG_PROCESS）** 能否在**非管理员权限**下捕获完整进程树。
 
 ## 结论（已在本机验证）
@@ -11,7 +18,7 @@
 | `CreateProcessW` + `DEBUG_ONLY_THIS_PROCESS` | 否 | 否 | 只跟直接子进程 |
 | Detours 注入 hook | 视目标而定 | 是 | 需注入，有竞态，会被 EDR 标记 |
 | ETW Kernel-Process | **是**（创建内核 session） | 是 | 内核层，但本项目拿不到权限 |
-| 编译器 wrapper（拦截调用） | 否 | 是（只对编译） | 见 `docs/RESEARCH-COMMAND-CAPTURE-2026-10-27.md` 的对比 |
+| 编译器 wrapper（拦截调用） | 否 | 是（只对编译） | 见 `docs/zh/RESEARCH-COMMAND-CAPTURE-2026-10-27.md` 的对比 |
 
 **关键**：用 `DEBUG_PROCESS` 启动目标进程后，**不需要任何权限提升**，就能收到整棵进程树的 `CREATE_PROCESS_DEBUG_EVENT`。
 

@@ -1,5 +1,9 @@
 # CommandCapture 命名规范（参考 LLVM / clang）
 
+<!-- i18n:begin -->
+[**English**](../en/NAMING-CONVENTION.md) | 中文
+<!-- i18n:end -->
+
 本文档定义本项目所有标识符的命名规则。
 
 参考来源：

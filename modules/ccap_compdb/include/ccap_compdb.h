@@ -459,7 +459,7 @@ const CompilerAdapter* makeGenericAdapter();
 
 // The configuration file (JSON)
 //
-// See section 5.3 of docs/DESIGN-MODULES-2026-10-27.md for the structure.
+// See section 5.3 of docs/en/DESIGN-MODULES-2026-10-27.md for the structure.
 struct CompdbConfig {
     // The enabled compilers
     struct CompilerEntry {

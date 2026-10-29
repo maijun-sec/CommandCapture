@@ -1,6 +1,6 @@
 # clang-tidy 配置
 #
-# 命名规则见 docs/NAMING-CONVENTION.md
+# 命名规则见 docs/zh/NAMING-CONVENTION.md（英文版：docs/en/NAMING-CONVENTION.md）
 #
 # 关键：**每一条 kind 都要显式配置**。
 #

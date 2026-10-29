@@ -1,5 +1,9 @@
 # Windows 采集原理：为什么用调试器 API，而不是 Detours
 
+<!-- i18n:begin -->
+[**English**](../en/WINDOWS-CAPTURE-PRINCIPLE-2026-10-27.md) | 中文
+<!-- i18n:end -->
+
 **日期**: 2026-10-27
 **状态**: 已实现并实测
 

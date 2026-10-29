@@ -10,7 +10,7 @@
 // ccap_compdb - configuration file parsing
 //
 // The configuration file is JSON. See section 5.3 of
-// docs/DESIGN-MODULES-2026-10-27.md for the structure.
+// docs/en/DESIGN-MODULES-2026-10-27.md for the structure.
 //
 // Design principles (following the established configuration thinking):
 //   1. **The configuration is optional** -- without a config file the built-in

@@ -10,7 +10,7 @@
 
 r"""Naming convention gate.
 
-The rules are described in docs/NAMING-CONVENTION.md.
+The rules are described in docs/en/NAMING-CONVENTION.md.
 
 Implementation notes
 --------------------
@@ -654,7 +654,7 @@ def main() -> int:
         print(f"  {rel}:{v.group('line')}:{v.group('col')}  "
               f"{v.group('kind')} '{v.group('name')}'{branch}")
     print()
-    print("See docs/NAMING-CONVENTION.md for the rules")
+    print("See docs/en/NAMING-CONVENTION.md for the rules")
     return 1
 
 
