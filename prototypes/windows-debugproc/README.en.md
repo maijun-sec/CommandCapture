@@ -39,9 +39,9 @@ To run the control group, change the entry point to `DbgProbe4` (or change `<Sta
 
 ```
 [create] ok=True err=0 root=19852
- [CREATE] pid=19852 <- cmd.exe (根)
- [CREATE] pid=5760 <- cmd.exe (孙进程)
- [CREATE] pid=13296 <- whoami.exe (曾孙进程)
+ [CREATE] pid=19852 <- cmd.exe (root)
+ [CREATE] pid=5760 <- cmd.exe (grandchild)
+ [CREATE] pid=13296 <- whoami.exe (great-grandchild)
  [EXIT] pid=13296
  [EXIT] pid=19852
 [total] create-events=3 rootExitCode=0x00000000

@@ -101,9 +101,9 @@ because they are **acronyms** (initialisms), not ordinary words.
 The equivalents in this project:
 
 ```cpp
-namespace ccap { // 顶层
-namespace ccap::compdb { // 编译数据库子模块
-namespace ccap::compdb::adapters { // 编译器适配器
+namespace ccap { // top level
+namespace ccap::compdb { // compilation database submodule
+namespace ccap::compdb::adapters { // compiler adapters
 }
 ```
 
@@ -218,8 +218,8 @@ it looks like "no errors", but it actually means "not checked".
 So the way to verify must be:
 
 ```bash
-# 故意写错一个名字, 看它报不报
-clang-tidy... # 期望: 报出命名违规
+# deliberately write a wrong name, and see whether it is reported
+clang-tidy... # expected: a naming violation is reported
 ```
 
 rather than "run it once and call it a pass if there are no errors".
@@ -230,9 +230,9 @@ rather than "run it once and call it a pass if there are no errors".
 
 ```cpp
 #if defined(_WIN32)
- // Windows 分支
+ // the Windows branch
 #else
- size_t name_start = 1; // ← 违规, 但 Windows 上这行不存在
+ size_t name_start = 1; // ← a violation, but this line does not exist on Windows
 #endif
 ```
 

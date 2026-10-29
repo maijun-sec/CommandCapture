@@ -61,10 +61,10 @@ The prototype code for `DEBUG_PROCESS` is in `prototypes/windows-debugproc/`, an
 ```
 [create] ok=True err=0 root=6420
  [CREATE] pid=6420 <- cmd.exe
- [CREATE] pid=8808 <- cmd.exe (孙进程) 
- [CREATE] pid=3596 <- whoami.exe (曾孙进程) 
+ [CREATE] pid=8808 <- cmd.exe (grandchild) 
+ [CREATE] pid=3596 <- whoami.exe (great-grandchild) 
 [total] create-events=3
-[marker file exists] = True <- 证明被调试进程真的执行了
+[marker file exists] = True <- proves the debuggee really executed
 ```
 
 > Incidental clarification: the `java-capture.properties` in this class of tool
@@ -81,9 +81,9 @@ User request: pass in a script and capture **every command that script launches,
 This actually contains three layers, which must be handled separately:
 
 ```
-L0 脚本自身被执行的命令 (e.g. cmd.exe /c build.bat)
-L1 脚本解释器内建的"动作" (e.g. cmd 的 echo/copy -- 不产生进程)
-L2 脚本拉起的外部进程 (e.g. build.bat 里的 cl.exe / git)
+L0 the commands the script itself executes (e.g. cmd.exe /c build.bat)
+L1 the "actions" built into the script interpreter (e.g. cmd echo/copy -- no process is created)
+L2 the external processes the script spawns (e.g. cl.exe / git inside build.bat)
 ```
 
 L2 is the main battlefield for LD_PRELOAD / Detours / ETW. **L1 can only be handled by parsing the script source.** This is the essential difference between this project and the class of tools that "only care about compiler invocations":
@@ -120,8 +120,8 @@ A typical tool of this class (which uses LD_PRELOAD to intercept exec and writes
 **What this class of tool does**: inside the hooked `execve`, **write `LD_PRELOAD` and the collector address back** into the environment block that is about to be passed to the child process.
 
 ```rust
-// 该工具的 intercept-preload/src/session.rs 语义
-// 检测到环境变量被清除时, 自动恢复 LD_PRELOAD 和 INTERCEPT_COLLECTOR_ADDRESS
+// the semantics of that tool's intercept-preload/src/session.rs
+// when an environment variable is detected as cleared, LD_PRELOAD and INTERCEPT_COLLECTOR_ADDRESS are restored automatically
 ```
 
 **Meaning for this project**: on Windows there is a **completely corresponding** mechanism -- the `PATH` variable being cleared, `cmd.exe`'s `/D` switch, PowerShell's `$env:PATH` override. The design must treat these equivalently.
@@ -213,9 +213,9 @@ cmd.exe /c "cmd.exe /c echo GRANDCHILD_RAN > <marker> & whoami.exe"
 **Result**:
 ```
 [create] ok=True err=0 root=6420
- [CREATE] pid=6420 <- cmd.exe (根)
- [CREATE] pid=8808 <- cmd.exe (子)
- [CREATE] pid=3596 <- whoami.exe (孙)
+ [CREATE] pid=6420 <- cmd.exe (root)
+ [CREATE] pid=8808 <- cmd.exe (child)
+ [CREATE] pid=3596 <- whoami.exe (grandchild)
  [EXIT] pid=3596
  [EXIT] pid=8808
  [EXIT] pid=6420
@@ -232,22 +232,22 @@ Control group (`DbgProbe4.cs`, `DebugActiveProcess`):
 ```
 [attach] DebugActiveProcess => True err=0
  [CREATE] pid=2664
-[total] create-events=1 <- 只有被 attach 的那个
+[total] create-events=1 <- only the one that was attached
 ```
 
 #### 3.1.3 Implementation Notes (Pitfalls Encountered)
 
 ```c
-// 1. STARTUPINFO 必须传, 不能传 IntPtr.Zero
+// 1. STARTUPINFO must be passed, not IntPtr.Zero
 STARTUPINFO si = { sizeof(si) };
 CreateProcessW(NULL, cmd, NULL, NULL, FALSE, DEBUG_PROCESS,
- NULL, NULL, &si, &pi); // si 传 NULL 会 ok=False err=0
+ NULL, NULL, &si, &pi); // passing NULL for si gives ok=False err=0
 ```
 
 ```c
-// 2. ContinueDebugEvent 的 status 用 DBG_CONTINUE (0x00010002), 不是 0
-// 用 0 的话被调试进程在第一次异常后不会继续跑
-// 症状: 只收到 1 个 CREATE_PROCESS 事件然后卡死
+// 2. The status of ContinueDebugEvent must be DBG_CONTINUE (0x00010002), not 0
+// with 0 the debuggee does not continue after the first exception
+// symptom: only 1 CREATE_PROCESS event is received and then it hangs
 ContinueDebugEvent(ev.dwProcessId, ev.dwThreadId, DBG_CONTINUE);
 ```
 
@@ -439,10 +439,10 @@ So `cd` **can only** be implemented by the shell itself inside its own process (
 
 ```
 shell (cwd = /home/me)
- └─ fork → 子进程执行 "cd /tmp"
- 子进程的 cwd 变成 /tmp
- 子进程退出
-shell (cwd = /home/me) ← 什么都没发生
+ └─ fork → the child process runs "cd /tmp"
+ the child process's cwd becomes /tmp
+ the child process exits
+shell (cwd = /home/me) ← nothing happened
 ```
 
 If `cd` were an external program, it would change the directory in vain -- the parent's directory would not change along with it.
@@ -485,7 +485,7 @@ where.exe cmd
 
 ```
 [000001] d=0 RT pid=17452 cmd.exe /c.../external.bat
-[000002] d=1 RT pid=19044 where.exe cmd ← 真的有进程
+[000002] d=1 RT pid=19044 where.exe cmd ← there really is a process
 ```
 
 **Evidence C: builtins are marked `ST` (static layer) in the output, not `RT` (runtime layer).**
@@ -574,8 +574,8 @@ See [How cmd.exe parses a command](https://github.com/johnstevenson/winbox-args/
 
 **Execution after splitting**:
 ```c
-// cmd 内部命令: SET -- 不创建进程
-// cmd 外部命令: 
+// cmd internal command: SET -- creates no process
+// cmd external command: 
 CreateProcess(C:\\projects\\prog.exe, "prog paramA \"C:\\ProgramData\"",...);
 ```
 
@@ -652,18 +652,18 @@ Compilation database generators only record **compiler invocations** and emit `c
 ┌─────────────────────────────────────────────────────────┐
 │ CommandCapture CLI (ccap run <script> [args]) │
 │ ┌───────────────────────────────────────────────────┐ │
-│ │ 1. 脚本分析层 (Script Analyzer) │ │
-│ │ 解析 sh/bat/ps1 → 提取内建命令 (L1) │ │
-│ │ 输出: 静态命令清单 + 变量引用警告 │ │
+│ │ 1. Script analysis layer (Script Analyzer) │ │
+│ │ parse sh/bat/ps1 → extract the builtin commands (L1) │ │
+│ │ output: a static command list + variable reference warnings │ │
 │ └───────────────────────────────────────────────────┘ │
 │ ┌───────────────────────────────────────────────────┐ │
-│ │ 2. 运行时捕获层 (Runtime Capture) │ │
+│ │ 2. Runtime capture layer (Runtime Capture) │ │
 │ │ Linux: LD_PRELOAD shim → execve/posix_spawn │ │
-│ │ Win: 调试器 API (DEBUG_PROCESS) 采集器 │ │
+│ │ Win: debugger API (DEBUG_PROCESS) collector │ │
 │ └───────────────────────────────────────────────────┘ │
 │ ┌───────────────────────────────────────────────────┐ │
-│ │ 3. 归一化 + 合并层 (Normalizer) │ │
-│ │ 统一事件模型 → 合并 L1/L2 → 去重 → 进程树 │ │
+│ │ 3. Normalization + merging layer (Normalizer) │ │
+│ │ unified event model → merge L1/L2 → deduplicate → process tree │ │
 │ └───────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -696,22 +696,22 @@ C# implementation, P/Invoking the Win32 debugger API directly. See `prototypes/w
 Core flow:
 
 ```csharp
-// 1) 以 DEBUG_PROCESS 启动目标
+// 1) start the target with DEBUG_PROCESS
 const uint DEBUG_PROCESS = 0x00000001;
 var si = new STARTUPINFO { cb = Marshal.SizeOf<STARTUPINFO>() };
 CreateProcessW(null, cmdLine, IntPtr.Zero, IntPtr.Zero, false,
  DEBUG_PROCESS, IntPtr.Zero, null, ref si, out var pi);
 
-// 2) 事件循环: 只关心 CREATE_PROCESS(3) / EXIT_PROCESS(5), 其余丢弃
+// 2) event loop: only care about CREATE_PROCESS(3) / EXIT_PROCESS(5), discard the rest
 while (true) {
  if (!WaitForDebugEvent(out var ev, 250)) { if (++quiet >= 6) break; continue; }
  quiet = 0;
 
  if (ev.dwDebugEventCode == CREATE_PROCESS_DEBUG_EVENT) {
- var hProc = ReadIntPtr(ev.u, 8); // 被调试进程句柄
+ var hProc = ReadIntPtr(ev.u, 8); // handle of the debuggee
  var namePtr = ReadIntPtr(ev.u, 40); // lpImageName
  var image = ReadRemoteString(hProc, namePtr);
- var cmdline = ReadCommandLineFromPeb(hProc); // 读子进程 PEB
+ var cmdline = ReadCommandLineFromPeb(hProc); // read the child process PEB
  Record(new CapturedCommand { Executable = image, Argv = cmdline,... });
  }
  ContinueDebugEvent(ev.dwProcessId, ev.dwThreadId, DBG_CONTINUE);
@@ -744,10 +744,10 @@ Only add it when information finer-grained than the debugger API provides is nee
 Refer directly to the implementation of comparable tools (C + Rust mixed, or pure C):
 
 ```c
-// 必须覆盖的符号 (完整列表) 
+// the symbols that must be covered (complete list) 
 execve, execv, execvp, execvpe, execl, execlp, execle,
 fexecve, posix_spawn, posix_spawnp,
-__execve, __posix_spawn // glibc 内部
+__execve, __posix_spawn // glibc internals
 ```
 
 Key implementation points (learned from comparable tools):
@@ -853,19 +853,19 @@ The debugger API does not "drop events" (the kernel guarantees delivery), but **
 **Windows (non-administrator, verified)**:
 
 ```powershell
-# 1. 确认 cmd.exe 内建命令不产生进程
+# 1. confirm that cmd.exe builtin commands create no process
 
 & cmd.exe /c "echo INTERNAL & whoami.exe"
 
-# 2. 确认 PowerShell Start-Process 的父子关系
+# 2. confirm the parent-child relationship of PowerShell Start-Process
 Get-CimInstance Win32_Process | Where-Object Name -match 'cmd' |
  Select ProcessId, ParentProcessId, Name, CommandLine
 
-# 3. 调试器 API 整树捕获 (核心验证) 
+# 3. debugger API whole-tree capture (the core validation) 
 cd prototypes/windows-debugproc
 dotnet build DbgProbe.csproj -c Release
 .\bin\Release\net9.0-windows\DbgProbe.exe
-# => [total] create-events=3 (根 cmd / 子 cmd / 孙 whoami)
+# => [total] create-events=3 (root cmd / child cmd / grandchild whoami)
 # => [marker file exists] = True
 ```
 
@@ -873,13 +873,13 @@ dotnet build DbgProbe.csproj -c Release
 
 ```powershell
 logman create trace CCProbe -p "Microsoft-Windows-Kernel-Process" 0x10 4 -o C:\ccprobe.etl -ets
-# 实测结果: Access is denied (非管理员会话) 
+# measured result: Access is denied (non-administrator session) 
 ```
 
 **Linux (pending validation)**:
 
 ```bash
-# LD_PRELOAD shim 能否覆盖 execve 系 + posix_spawn 系
+# whether the LD_PRELOAD shim can cover the execve family + the posix_spawn family
 ```
 
 ### 8.4 Two Points Still Needing Your Decision

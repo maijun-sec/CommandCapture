@@ -1737,7 +1737,7 @@ powershell -File tests\run_tests.ps1
 # Windows 编译命令端到端测试（29 项）
 powershell -File tests\run_tests_compdb.ps1
 
-# 单元测试 + C ABI 验证 + 命名门禁 + 协议头门禁（5 项，约 160 秒）
+# 单元测试 + C ABI 验证 + 命名门禁 + 协议头门禁 + 文档双语门禁（7 项，约 500 秒）
 ctest --test-dir build -C Release --output-on-failure
 
 # 命名规范门禁（也可以单独跑）
@@ -1745,6 +1745,13 @@ python tests\check_naming.py
 
 # 协议头门禁（也可以单独跑；--fix 会自动补上缺失的头）
 python tests\check_license.py
+
+# 文档双语门禁（也可以单独跑）
+python scripts\check_docs_i18n.py          # 中英文两份结构必须一致
+python scripts\check_docs_translation.py   # 英文版不许残留未翻译的中文
+
+# 文档门禁的变异测试（证明门禁真的能发现问题）
+python scripts\mutate_docs_i18n.py
 ```
 
 ```bash
@@ -1771,7 +1778,7 @@ python3 tests/check_naming.py
 | Windows 编译命令 `run_tests_compdb.ps1` | 29/29 |
 | Windows 单元测试 `test_compdb.exe` | 163/163 |
 | Windows 单元测试 `test_cmdline.exe` | ALL PASSED |
-| Windows CTest（含 C ABI + 命名门禁 + 协议头门禁） | 5/5 |
+| Windows CTest（含 C ABI + 命名门禁 + 协议头门禁 + 文档双语门禁） | 7/7 |
 | Windows 命名门禁 `check_naming.py` | 0 处违规（29 个文件 × 2 个分支 pass） |
 | Windows 构建 | 零警告 |
 | Linux 回归 `run_tests_linux.sh` | 退出码 0 |

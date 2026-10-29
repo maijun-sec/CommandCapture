@@ -43,8 +43,8 @@ a child process changing its own copy has no effect on the parent. So `cd` can o
 
 ```
 shell (cwd = /home/me)
- └─ fork → 子进程执行 "cd /tmp" → 子进程 cwd 变了 → 子进程退出
-shell (cwd = /home/me) ← 什么都没发生
+ └─ fork → child process runs "cd /tmp" → child cwd changed → child exits
+shell (cwd = /home/me) ← nothing happened
 ```
 
 If `cd` were an external program, changing the directory would be pointless anyway. **This is a semantic constraint, not a performance choice** --
@@ -63,7 +63,7 @@ where.exe cmd
 ```
 $ ccap run mixed.bat --no-scan --format text
 [000001] d=0 RT pid=16684 cmd.exe /c.../mixed.bat
-[000002] d=1 RT pid=19044 where.exe cmd ← 外部程序: 有进程
+[000002] d=1 RT pid=19044 where.exe cmd ← external program: there is a process
 ```
 
 `cd` and `echo` produce no events at all -- because they did not create any process.
@@ -87,12 +87,12 @@ For the full derivation and its boundaries (variable expansion, `for` loops, dyn
 ### Windows
 
 ```powershell
-# 用 MSVC 编译
+# Build with MSVC
 
 cmake -G "Visual Studio 17 2022" -A x64 -S. -B build
 cmake --build build --config Release
 
-# 跑一个构建脚本
+# Run a build script
 .\build\Release\ccap.exe run build.bat --format text
 ```
 
@@ -112,30 +112,30 @@ cmake --build build
 ## Command line
 
 ```
-ccap run <script|exe> [args...] 运行目标并捕获整棵进程树
-ccap scan <script> 仅做脚本静态分析 (捕获内建命令) 
+ccap run <script|exe> [args...] run the target and capture the whole process tree
+ccap scan <script> script static analysis only (captures builtins) 
 
-选项:
- --format <json|ndjson|text> 输出格式 (默认 json) 
- --out <file> 写入文件而非 stdout
- --cwd <dir> 目标工作目录
- --no-scan 关闭脚本静态分析
- --no-recursive 静态分析不递归进被调用脚本
- --depth <n> 静态分析递归深度 (默认 4) 
- --timeout <ms> 运行超时
- --quiet-ms <ms> 根进程退出后, 等待残留子进程的静默期
- (默认 300; 这是安全网, 不是结束判据) 
- --exclude <name> 排除可执行文件名 (可重复) 
- --exclude-str <text> 排除命令行包含该子串的事件 (可重复) 
- --include <name> 只保留该可执行文件名 (可重复; 白名单) 
- --tree 输出进程树视图 (缩进) 
- --summary 追加一行汇总统计
- --clear-being-debugged 清掉目标 PEB 的 BeingDebugged 标志
- (Windows 专用; 见下) 
- --stdout-to-stderr 把目标的 stdout 转到 stderr
- (ccap 自己的 stdout 只留采集数据, 
- 这样 --format json 可以直接管道消费) 
- --verbose 额外输出诊断信息到 stderr
+options:
+ --format <json|ndjson|text> output format (default json) 
+ --out <file> write to a file instead of stdout
+ --cwd <dir> target working directory
+ --no-scan disable script static analysis
+ --no-recursive static analysis does not recurse into called scripts
+ --depth <n> static analysis recursion depth (default 4) 
+ --timeout <ms> run timeout
+ --quiet-ms <ms> after the root process exits, the quiet period to wait for leftover child processes
+ (default 300; this is a safety net, not the termination criterion) 
+ --exclude <name> exclude an executable file name (repeatable) 
+ --exclude-str <text> exclude events whose command line contains this substring (repeatable) 
+ --include <name> keep only this executable file name (repeatable; whitelist) 
+ --tree print the process tree view (indented) 
+ --summary append a line of summary statistics
+ --clear-being-debugged clear the target PEB's BeingDebugged flag
+ (Windows only; see below) 
+ --stdout-to-stderr redirect the target's stdout to stderr
+ (ccap's own stdout keeps only the collected data, 
+ so --format json can be consumed directly from a pipe) 
+ --verbose output extra diagnostics to stderr
 ```
 
 ### Filtering events
@@ -145,7 +145,7 @@ of which the overwhelming majority are the compiler's internal steps.
 
 ```bash
 ccap run build.bat --exclude cc1plus.exe --exclude as.exe
-ccap run build.bat --include git --include npm # 只看白名单
+ccap run build.bat --include git --include npm # whitelist only
 ```
 
 **Nothing is filtered by default** -- silently dropping events is the worst failure mode.
@@ -271,26 +271,26 @@ The format is **detected automatically** -- you don't have to tell it.
 ### Subcommands
 
 ```
-ccap compdb list 列出编译器类型全量表
-ccap compdb aliases <编译器...> 查某个编译器的所有别名 (软连接互认) 
-ccap compdb parse <文件...> 解析并统计
-ccap compdb show <文件...> 展示解析出的编译命令详情
-ccap compdb export <文件...> 生成 compile_commands.json (或 clang 命令) 
-ccap compdb translate <文件...> 生成分析器风格的翻译命令
-ccap compdb capture <构建命令...> 跑一次构建并抓编译命令
+ccap compdb list print the full compiler type table
+ccap compdb aliases <compiler...> look up all aliases of a compiler (symlinks recognize each other) 
+ccap compdb parse <file...> parse and summarize
+ccap compdb show <file...> show the details of the parsed compile commands
+ccap compdb export <file...> generate compile_commands.json (or clang commands) 
+ccap compdb translate <file...> generate analyzer-style translated commands
+ccap compdb capture <build command...> run a build once and capture the compile commands
 
-compdb 选项:
- --config <file> 配置文件 (JSON) 
- --output <file> 输出文件 (默认 compile_commands.json) 
+compdb options:
+ --config <file> configuration file (JSON) 
+ --output <file> output file (default compile_commands.json) 
  --output-format <clang|clang-cmd|translated>
- 输出格式 (默认 clang) 
- clang compile_commands.json, 原样保留
- clang-cmd 每行一条真正的 clang 命令
- translated 分析器风格的参数
- --keep-scripts 保留脚本命令 (默认过滤掉) 
- --all show 时不过滤 (同时标注 KEEP/DROP) 
- --exclude <name> 额外排除 (可重复) 
- --include <name> 白名单 (可重复) 
+ output format (default clang) 
+ clang compile_commands.json, kept as-is
+ clang-cmd one real clang command per line
+ translated analyzer-style arguments
+ --keep-scripts keep script commands (filtered out by default) 
+ --all do not filter for show (also mark KEEP/DROP) 
+ --exclude <name> additional exclusion (repeatable) 
+ --include <name> whitelist (repeatable) 
 ```
 
 ### Recognition: the full compiler table
@@ -327,7 +327,7 @@ but it is **not the same compiler** as the native `g++`, and the two must not be
 Reality on a real machine:
 
 ```
-/usr/bin/gcc -> /usr/bin/gcc-11 (软连接)
+/usr/bin/gcc -> /usr/bin/gcc-11 (symlink)
 /usr/bin/cc -> /usr/bin/gcc
 /usr/bin/c++ -> /usr/bin/g++
 ```
@@ -761,8 +761,8 @@ Write-Output "$(Get-Date -Format o)"
 This produces **two** events:
 
 ```
-Write-Output $(Get-Date -Format o) ← 外层命令, 参数完整
-Get-Date -Format o ← 子表达式里真的被调用的命令
+Write-Output $(Get-Date -Format o) ← outer command, arguments intact
+Get-Date -Format o ← the command actually invoked inside the subexpression
 ```
 
 The outer command's arguments **stay intact** -- the arguments must not be truncated just because the subexpression was pulled out,
@@ -834,53 +834,53 @@ Four modules, with a **one-way** dependency direction:
 
 ```
 modules/
- ccap_core/ 纯算法与纯数据, **不允许**引用任何平台 API
+ ccap_core/ pure algorithms and pure data, **must not** reference any platform API
  core/
- event.h/.cpp 统一事件模型 (CommandEvent / EventCollector) 
- json.h/.cpp 极简 JSON 序列化
- json_parser.h/.cpp 极简 JSON 解析 (给 compdb 读配置用) 
- command_line.h/.cpp Windows CRT & POSIX shell 命令行切分
- normalize.h/.cpp 路径归一化, 可执行文件解析, 环境变量展开
- script_scanner.h/.cpp 脚本静态分析 (bat/cmd/sh) 
- powershell_scanner.h/.cpp PowerShell 静态分析 (别名/管道/脚本块/调用运算符/子表达式) 
- tree.h/.cpp 进程树视图渲染
- filter.h/.cpp 事件过滤 (--exclude / --include) 
+ event.h/.cpp unified event model (CommandEvent / EventCollector) 
+ json.h/.cpp minimal JSON serialization
+ json_parser.h/.cpp minimal JSON parsing (used by compdb to read the config) 
+ command_line.h/.cpp Windows CRT & POSIX shell command line splitting
+ normalize.h/.cpp path normalization, executable resolution, environment variable expansion
+ script_scanner.h/.cpp script static analysis (bat/cmd/sh) 
+ powershell_scanner.h/.cpp PowerShell static analysis (aliases/pipelines/script blocks/call operator/subexpressions) 
+ tree.h/.cpp process tree view rendering
+ filter.h/.cpp event filtering (--exclude / --include) 
 
- ccap_capture/ 需要 OS 能力 (进程捕获) 
+ ccap_capture/ requires OS capabilities (process capture) 
  capture/
- platform.h/.cpp 平台抽象 + 统一调度 + 完整性结论
- windows_debugger.cpp Windows: CreateProcessW + DEBUG_PROCESS 事件循环
- peb_reader.cpp Windows: 从被调试进程读 PEB 命令行 / 父进程 PID
- linux_preload.cpp Linux: fork/exec + 管道收集
- linux_shim.cpp Linux: LD_PRELOAD 共享库 (shim, 独立构建) 
- capi.cpp C ABI 实现
+ platform.h/.cpp platform abstraction + unified dispatch + completeness verdict
+ windows_debugger.cpp Windows: CreateProcessW + DEBUG_PROCESS event loop
+ peb_reader.cpp Windows: read the PEB command line / parent PID from the debuggee
+ linux_preload.cpp Linux: fork/exec + pipe collection
+ linux_shim.cpp Linux: LD_PRELOAD shared library (shim, built separately) 
+ capi.cpp C ABI implementation
  include/
- ccap_capture.h **稳定 C ABI** (对外唯一契约) 
+ ccap_capture.h **stable C ABI** (the only external contract) 
 
- ccap_compdb/ 编译命令识别 / 解析 / 导出
+ ccap_compdb/ compile command recognition / parsing / export
  compdb/
- compiler_table.cpp 编译器全量表 (可扩展规则) 
- alias_resolver.cpp 软连接真实路径别名互认
- command_parser.cpp 多来源命令解析
- compile_command.cpp 编译命令结构化
- filter_rules.cpp 脚本/链接器/汇编器过滤
- compdb_exporter.cpp 导出 clang 编译数据库 / 分析器翻译命令
- clang_translator.cpp 把任意编译器的命令翻译成真正的 clang 命令
- config.cpp JSON 配置加载
+ compiler_table.cpp full compiler table (extensible rules) 
+ alias_resolver.cpp symlink real-path alias recognition
+ command_parser.cpp multi-source command parsing
+ compile_command.cpp compile command structuring
+ filter_rules.cpp script/linker/assembler filtering
+ compdb_exporter.cpp export the clang compilation database / analyzer translation commands
+ clang_translator.cpp translate any compiler's command into a real clang command
+ config.cpp JSON configuration loading
  adapters/
- adapter_registry.cpp 适配器注册表
+ adapter_registry.cpp adapter registry
  gcc_adapter.cpp GCC / G++
  clang_adapter.cpp Clang
  msvc_adapter.cpp MSVC cl.exe
- generic_adapter.cpp 兜底
+ generic_adapter.cpp fallback
  include/
  ccap_compdb.h
 
- ccap/ CLI 入口
+ ccap/ CLI entry point
  app/
- main.cpp 命令分发
- cli.cpp 参数解析
- compdb_cmd.cpp compdb 子命令实现
+ main.cpp command dispatch
+ cli.cpp argument parsing
+ compdb_cmd.cpp compdb subcommand implementation
 ```
 
 ```
@@ -918,8 +918,8 @@ The rules are **enforced** by `readability-identifier-naming` in `.clang-tidy`,
 and driven by `tests/check_naming.py`:
 
 ```powershell
-# 不需要先进 MSVC 环境 -- include 路径会自动从
-# Visual Studio 安装目录 + Windows SDK 注册表项探测
+# no need to enter the MSVC environment first -- the include paths are auto-detected from
+# the Visual Studio install directory + the Windows SDK registry key
 python tests\check_naming.py
 ```
 
@@ -998,17 +998,17 @@ to serve as the compilation database -- it does not interfere with the build tre
 CreateProcessW(target,..., DEBUG_PROCESS)
  ↓
  ┌─────────────────────────────────────────────┐
- │ WaitForDebugEvent 循环 │
- │ CREATE_PROCESS_DEBUG_EVENT → 记录事件 │
+ │ WaitForDebugEvent loop │
+ │ CREATE_PROCESS_DEBUG_EVENT → record the event │
  │ EXCEPTION_DEBUG_EVENT → DBG_CONTINUE │
- │ EXIT_PROCESS_DEBUG_EVENT → 移除存活集合 │
+ │ EXIT_PROCESS_DEBUG_EVENT → remove from the live set │
  └─────────────────────────────────────────────┘
  ↓
- 从被调试进程 PEB 读: 
- ProcessParameters->CommandLine (真实命令行) 
+ read from the debuggee's PEB: 
+ ProcessParameters->CommandLine (the real command line) 
  ProcessParameters->ImagePathName
  ProcessParameters->CurrentDirectory
- PEB->InheritedFromUniqueProcessId (父进程 PID) 
+ PEB->InheritedFromUniqueProcessId (parent process PID) 
 ```
 
 `DEBUG_PROCESS` makes Windows automatically include all descendant processes in the debugging session, so the whole tree can be captured without elevation.
@@ -1016,15 +1016,15 @@ CreateProcessW(target,..., DEBUG_PROCESS)
 ### Linux capture principle
 
 ```
-fork() → 子进程
+fork() → child process
  setenv("LD_PRELOAD", ccap_shim.so)
  setenv("CCAP_SHIM_FD", 3)
  execv(target)
  ↓
- shim 拦截 execve 系 / posix_spawn 系
- → 把 (pid, ppid, argv, cwd) 写到 fd 3
+ the shim intercepts the execve family / posix_spawn family
+ → write (pid, ppid, argv, cwd) to fd 3
  ↓
- 父进程 poll() 读管道 → 构造事件 → 算深度
+ parent poll() reads the pipe → build the event → compute the depth
 ```
 
 #### How depth is computed
@@ -1165,7 +1165,7 @@ Measured (`tests/probe/DbgPeb.cpp`):
 ```
 ProcessBasicInformation -> peb = 0x914000
 ProcessWOW64Information -> peb = 0x915000
-目标自己报的 fs:[0x30] -> 0x915000
+reported by the target itself fs:[0x30] -> 0x915000
 ```
 
 They differ by 0x1000. **Patching the PEB64 has no effect whatsoever on the target.**
@@ -1213,7 +1213,7 @@ Static analyzers must be tested with an "expected count", not just by "there is 
 In early versions the depth was computed as:
 
 ```cpp
-int depth = 1; // 兜底
+int depth = 1; // fallback
 auto it = depth_of.find(e.ppid);
 if (it!= depth_of.end()) depth = it->second + 1;
 ```
@@ -1289,7 +1289,7 @@ After the timeout kills the process tree, the event loop breaks out, but the cle
 
 ```cpp
 if (!root_exited) {
- WaitForSingleObject(pi.hProcess, 5000); // ← 超时路径上不该等这么久
+ WaitForSingleObject(pi.hProcess, 5000); // ← should not wait this long on the timeout path
 ```
 
 The user set a 2-second timeout but has to wait 7 seconds. This is not "a bit slower",
@@ -1336,7 +1336,7 @@ Editors on Windows and PowerShell 5.1's `Set-Content -Encoding UTF8` both write 
 A BOM is not **content**, it is an encoding marker. Leave it in place, and every **prefix-based** parser fails silently:
 
 ```cpp
-line.rfind("EXECUTING ", 0) == 0 // BOM 在最前面 -> 永远不等
+line.rfind("EXECUTING ", 0) == 0 // the BOM is at the front -> it never matches
 ```
 
 The symptom is "**0 commands** parsed", not "parsing failed"-- the worst kind of bug:
@@ -1361,8 +1361,8 @@ the latter misses cases (there is always a new consumer), and the symptom is sil
 The symlink alias test kept failing on Linux. On closer inspection the product had no bug; the test was wrong:
 
 ```cpp
-bool linked = (std::rename(real.c_str(), alias.c_str()) == 0); // ← 把源文件移走了
-std::string cmd = "ln -sf '" + real + "' '" + alias + "'"; // ← 指向一个不存在的东西
+bool linked = (std::rename(real.c_str(), alias.c_str()) == 0); // ← moved the source file away
+std::string cmd = "ln -sf '" + real + "' '" + alias + "'"; // ← points at something that does not exist
 ```
 
 `rename` moved `real` to `alias`, so:
@@ -1384,10 +1384,10 @@ During the LLVM/clang naming convention refactor, 341 identifiers were renamed i
 One of them was the Linux shim's hook function:
 
 ```cpp
-// 改之前 (正确) 
+// before the change (correct) 
 extern "C" int posix_spawn(pid_t* pid, const char* path,...);
 
-// 改之后 (静默失效) 
+// after the change (silently broken) 
 extern "C" int posixSpawn(pid_t* pid, const char* path,...);
 ```
 
@@ -1398,7 +1398,7 @@ while `posix_spawn` still points at glibc's real implementation.
 The symptom is especially deceptive:
 
 ```
-make 只捕获到根事件, 子进程全部丢失
+make only captures the root event, every child process is lost
 ```
 
 Because `make` goes through the `posix_spawn` path, the hook never took effect.
@@ -1426,7 +1426,7 @@ clang-tidy's `readability-identifier-naming` **outputs no naming warnings at all
 when a file **has compile errors**.
 
 ```
-编译错误 → clang-tidy 跳过命名检查 → 0 条警告 → 门禁显示绿色
+compile error → clang-tidy skips the naming check → 0 warnings → the gate shows green
 ```
 
 The gate was supposed to prevent drift, but it turned into "checked nothing yet shows as passed".
@@ -1500,7 +1500,7 @@ changing parameters doesn't help, you have to change the data source (the regist
 Fix (`tests/check_naming.py`):
 
 ```python
-# 合并所有来源, 只丢弃不存在的路径
+# merge all sources, dropping only the paths that do not exist
 ambient_usable, ambient_missing = usable_include_dirs(os.environ["INCLUDE"])
 discovered_usable, _ = usable_include_dirs(discover_msvc_includes())
 inc_dirs = dedupe(ambient_usable + discovered_usable)
@@ -1519,7 +1519,7 @@ Now this gate also works in a CTest environment **without a vcvars64.bat environ
 The old `tree.cpp`, when attaching child nodes to their parent:
 
 ```cpp
-child = std::move(*it); // 把节点从 pool 里搬走了
+child = std::move(*it); // moved the node out of the pool
 ```
 
 The node pool is a `std::vector`; after `std::move` the element is still in the vector,
@@ -1529,14 +1529,14 @@ Result: **grandchildren disappear from the tree**. 4 original events rendered on
 
 ```
 [000001] d=0 RT pid=600 ccap_repeat
-[000002] d=0 RT pid=611 echo first <- 少了一个
+[000002] d=0 RT pid=611 echo first <- one is missing
 ```
 
 Fix: switch to a **stable node pool + child index**:
 
 ```cpp
-std::vector<TreeNode> pool_; // 节点只增不减
-std::vector<std::vector<size_t>> kids_; // 子节点存**索引**, 不是指针
+std::vector<TreeNode> pool_; // nodes are only ever added, never removed
+std::vector<std::vector<size_t>> kids_; // children are stored as **indices**, not pointers
 ```
 
 This way every runtime event is **rendered exactly once**, and it doesn't depend on the node's position in the vector.
@@ -1560,9 +1560,9 @@ Reason: **clang-tidy only checks what still exists after preprocessing**.
 
 ```cpp
 #if defined(_WIN32)
-... Windows 分支...
+... the Windows branch ...
 #else
- size_t name_start = open + 1; // ← 违规, 但 Windows 上这行根本不存在
+ size_t name_start = open + 1; // ← a violation, but this line does not exist on Windows
 #endif
 ```
 
@@ -1572,7 +1572,7 @@ Running clang-tidy on Windows, the `_WIN32` branch survives and the `#else` bran
 Measured evidence (`normalize.cpp`):
 
 ```
-把 name_start 改回 nameStart 前后, 门禁都是 "0 处违规"
+before and after changing name_start back to nameStart, the gate reports "0 violations" in both cases
 ```
 
 And there is an even more subtle point: **MSVC's SDK headers implicitly bring in `_WIN32`**,
@@ -1594,7 +1594,7 @@ Verification (deliberately putting `name_start` back into the `#else` branch):
 
 ```
 FAIL: 1 处命名违规
-modules\ccap_core\core\normalize.cpp:380:16 local variable 'name_start' [另一侧分支]
+modules\ccap_core\core\normalize.cpp:380:16 local variable 'name_start' [the other branch]
 ```
 
 **Lesson -- which code a gate "checked" matters just as much as whether it checked at all.**
@@ -1606,10 +1606,10 @@ During the naming refactor, a script was used to rename in bulk. The script cann
 so it changed the JSON keys of the configuration file as well:
 
 ```cpp
-// 改之前 (正确) 
+// before the change (correct) 
 "system_includes": { "gcc": ["..."] }
 
-// 改之后 (错的) 
+// after the change (wrong) 
 "systemIncludes": { "gcc": ["..."] }
 ```
 
@@ -1728,35 +1728,42 @@ rather than assumed to.** The criterion is whether the address in the trace is t
 ## Tests
 
 ```powershell
-# Windows 回归测试 (100 项) 
+# Windows regression tests (100 items) 
 powershell -File tests\run_tests.ps1
 
-# Windows 编译命令端到端测试 (29 项) 
+# Windows compile-command end-to-end tests (29 items) 
 powershell -File tests\run_tests_compdb.ps1
 
-# 单元测试 + C ABI 验证 + 命名门禁 + 协议头门禁 (5 项, 约 160 秒) 
+# Unit tests + C ABI verification + naming gate + license header gate + docs i18n gate (7 tests, about 500 s)
 ctest --test-dir build -C Release --output-on-failure
 
-# 命名规范门禁 (也可以单独跑) 
+# Naming convention gate (can also be run on its own)
 python tests\check_naming.py
 
-# 协议头门禁 (也可以单独跑; --fix 会自动补上缺失的头) 
+# License header gate (can also be run on its own; --fix adds the missing headers)
 python tests\check_license.py
+
+# Documentation bilingual gates (can also be run on their own)
+python scripts\check_docs_i18n.py          # the two language versions must match structurally
+python scripts\check_docs_translation.py   # no untranslated Chinese left in the English pages
+
+# Mutation test for the documentation gates (proves the gates can actually fail)
+python scripts\mutate_docs_i18n.py
 ```
 
 ```bash
-# Linux 回归测试
-bash tests/run_tests_linux.sh # cmake / make 全链路
-bash tests/run_tests_linux_extra.sh # execveat / posix_spawn / 静态链接诊断
-bash tests/run_tests_linux_dedup.sh # 去重不能丢事件
+# Linux regression tests
+bash tests/run_tests_linux.sh # the whole cmake / make chain
+bash tests/run_tests_linux_extra.sh # execveat / posix_spawn / static linking diagnostics
+bash tests/run_tests_linux_dedup.sh # deduplication must not lose events
 bash tests/run_tests_linux_stdout.sh # --stdout-to-stderr
-bash tests/run_tests_linux_depth.sh # 深度 / 根事件 / 超时 / 完整性 / 树渲染 / shim ABI 符号 (33 项) 
-bash tests/run_tests_compdb.sh # 编译命令端到端 (25 项) 
+bash tests/run_tests_linux_depth.sh # depth / root events / timeout / completeness / tree rendering / shim ABI symbols (33 items) 
+bash tests/run_tests_compdb.sh # compile commands end-to-end (25 items) 
 
-# 或者一次跑完全部
+# or run everything at once
 bash tests/run_all_linux_suites.sh
 
-# Linux 上的命名规范门禁 (需要 clang-tidy) 
+# The naming convention gate on Linux (requires clang-tidy) 
 python3 tests/check_naming.py
 ```
 
