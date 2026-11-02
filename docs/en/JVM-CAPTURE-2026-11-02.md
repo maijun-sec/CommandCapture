@@ -3,7 +3,7 @@
 > Design document · 2026-11-02
 >
 > Module location: `modules/ccap_jvm/`
-> Status: implemented; 91 Maven tests pass (four of them, the Java 8 end-to-end
+> Status: implemented; 97 Maven tests pass (four of them, the Java 8 end-to-end
 > tests, only run when a Java 8 JDK is provided). The ECJ / Kotlin / Scala 3
 > end-to-end tests drive the real compilers.
 > Supported JDKs: **8 and up** -- the agent itself is compiled to Java 8 byte code.
@@ -611,12 +611,48 @@ JAVA_TOOL_OPTIONS="-javaagent:/path/ccap-jvm-capture.jar=ccap.capture.dir=/tmp/c
 > While measuring this: when Gradle uses a toolchain, the compiler classes come from that JDK's
 > `tools.jar`, held by the **extension class loader**. That is the cause of the trap in 11.5.
 
-### 11.3 The agent's arguments
+### 11.3 One command with the launcher
+
+All three of the above need environment variables set up. **The launcher wraps that up**:
+
+```bash
+# Point the captures somewhere
+export CCAP_CAPTURE_DIR=/tmp/captures
+
+# Then wrap any command with the launcher
+java -jar ccap-jvm-capture.jar javac -cp lib.jar -d out src/Foo.java
+java -jar ccap-jvm-capture.jar mvn -q clean install
+java -jar ccap-jvm-capture.jar gradle build
+```
+
+**What the launcher does**: it adds `JAVA_TOOL_OPTIONS` to the child's environment, and then runs
+your command **exactly as given**.
+
+- **It does not touch the command line** -- a build script that inspects its own arguments sees
+  what it expects.
+- **It does not replace an existing value** -- the agent is *appended* to whatever
+  `JAVA_TOOL_OPTIONS` already said.
+- **The capture directory travels as the agent's own argument** (`-javaagent:...=ccap.capture.dir=...`),
+  because that is the only channel that reaches the compiler's JVM.
+
+Measured, all three commands capture through the launcher:
+
+| Command | Captured through the launcher |
+|---|---|
+| `javac` | Yes |
+| `mvn` | Yes |
+| `gradle` | Yes |
+
+> The jar does two things: the `Main-Class` is `org.ccap.jvm.capture.Main`, which dispatches on the
+> first argument -- `attach` is the dynamic attach, anything else is the launcher. The
+> `-javaagent` path is the JVM's own and does not go through here.
+
+### 11.4 The agent's arguments
 
 The `key=value` part of `-javaagent:jar=key=value` becomes system properties. **That is the one
 channel Gradle lets through**, because Gradle forwards `-javaagent` but drops every `-D`.
 
-### 11.4 Reading the captures back
+### 11.5 Reading the captures back
 
 ```bash
 ccap compdb parse /tmp/captures
@@ -624,7 +660,7 @@ ccap compdb show /tmp/captures
 ccap compdb export /tmp/captures -o compile_commands.json
 ```
 
-### 11.5 Which class loader holds the compiler decides whether it is captured
+### 11.6 Which class loader holds the compiler decides whether it is captured
 
 This is the deepest trap found while measuring, and it is the classic shape of "the compile
 succeeded, the capture is empty, and nothing says why".
@@ -663,6 +699,8 @@ fix the second case failed; after it, both pass.
 | `MultiLanguageEndToEndTest` | **ECJ / Kotlin / Scala 3, with the real compilers** |
 | `Jdk8EndToEndTest` | **a real compile on a real Java 8 JVM** |
 | `ClassLoaderCoverageTest` | **the compiler must be caught on the bootstrap and the application loader** |
+| `CaptureLauncherTest` | the launcher's injection logic (appends, never replaces) |
+| `CaptureLauncherEndToEndTest` | **the launcher really captures, through javac and java** |
 | `CompilerJdkSupport` | probes whether the compiler recognises the current JDK (Kotlin's version parsing) |
 
 `MultiLanguageEndToEndTest` is the critical one: it runs the **real** compilers (ECJ 3.33.0,

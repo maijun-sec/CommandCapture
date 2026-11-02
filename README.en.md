@@ -882,6 +882,8 @@ modules/
  ccap-jvm-capture/
  src/main/java/org/ccap/jvm/capture/
  CaptureAgent.java the agent entry point (premain / agentmain)
+ CaptureLauncher.java the launcher: injects the agent into a child process
+ Main.java the jar's entry point (dispatches attach / launcher)
  CompilerEntryPoints.java the declarative entry point table (one per compiler)
  CompilerHooks.java the ByteBuddy Advice hooks
  CaptureRecorder.java the recorder (on the bootstrap class loader)
@@ -921,6 +923,16 @@ compile the compiler **actually performed** -- the classpath it really used, the
 files it really compiled. The output is a JSON capture file, which `ccap compdb` reads
 directly. See [`docs/en/JVM-CAPTURE-2026-11-02.md`](docs/en/JVM-CAPTURE-2026-11-02.md).
 
+How to attach it:
+
+```bash
+export CCAP_CAPTURE_DIR=/tmp/captures
+
+# The launcher injects the agent, then runs your command exactly as given.
+java -jar ccap-jvm-capture.jar javac -cp lib.jar -d out src/Foo.java
+java -jar ccap-jvm-capture.jar mvn -q clean install
+java -jar ccap-jvm-capture.jar gradle build
+```
 ### Naming convention (modeled on LLVM / clang)
 
 For the full rules see [`docs/en/NAMING-CONVENTION.md`](docs/en/NAMING-CONVENTION.md).

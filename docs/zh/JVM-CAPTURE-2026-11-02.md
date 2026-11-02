@@ -3,7 +3,7 @@
 > 设计文档 · 2026-11-02
 >
 > 模块位置：`modules/ccap_jvm/`
-> 状态：已实现，Maven 91 个测试通过（其中 4 个 Java 8 端到端测试在提供 JDK 8 时才跑）；
+> 状态：已实现，Maven 97 个测试通过（其中 4 个 Java 8 端到端测试在提供 JDK 8 时才跑）；
 > ECJ / Kotlin / Scala 3 三个端到端测试驱动真实编译器。
 > 支持的 JDK：**8 及以上** —— agent 自身编译为 Java 8 字节码。
 
@@ -560,12 +560,44 @@ JAVA_TOOL_OPTIONS="-javaagent:/path/ccap-jvm-capture.jar=ccap.capture.dir=/tmp/c
 > 顺带一提：Gradle 用 toolchain 时，编译器类来自 toolchain 那个 JDK 的 `tools.jar`，
 > 由**扩展类加载器**持有 —— 这正是下面 11.4 那个坑的成因。
 
-### 11.3 agent 的参数
+### 11.3 用 launcher 一条命令搞定
+
+上面三种方式都要配环境变量。**launcher 把这件事包起来**：
+
+```bash
+# 把 capture 目录指到哪
+export CCAP_CAPTURE_DIR=/tmp/captures
+
+# 然后用 launcher 包住任何命令
+java -jar ccap-jvm-capture.jar javac -cp lib.jar -d out src/Foo.java
+java -jar ccap-jvm-capture.jar mvn -q clean install
+java -jar ccap-jvm-capture.jar gradle build
+```
+
+**launcher 做的事**：给子进程的环境里加上 `JAVA_TOOL_OPTIONS`，然后**原样**执行你的命令。
+
+- **不改命令行** —— 构建脚本检查自己的参数时，看到的就是预期的样子
+- **不改已有环境变量** —— 是在原有的 `JAVA_TOOL_OPTIONS` 后面**追加**，不是替换
+- **捕获目录用 agent 的参数传**（`-javaagent:...=ccap.capture.dir=...`），
+  因为那是唯一能进到编译器 JVM 里的通道
+
+实测三个命令都通过：
+
+| 命令 | 通过 launcher 捕获 |
+|---|---|
+| `javac` | ✅ |
+| `mvn` | ✅ |
+| `gradle` | ✅ |
+
+> jar 干两件事：`Main-Class` 是 `org.ccap.jvm.capture.Main`，它按第一个参数分发 ——
+> `attach` 是动态挂载，其他都是 launcher。`-javaagent` 那条路是 JVM 定的，不走这里。
+
+### 11.4 agent 的参数
 
 `-javaagent:jar=key=value` 的 `key=value` 会变成系统属性。**这是 Gradle 里唯一能配的通道**，
 因为 Gradle 转发 `-javaagent`，但不转发 `-D`。
 
-### 11.4 捕获读回来
+### 11.5 捕获读回来
 
 ```bash
 ccap compdb parse /tmp/captures
@@ -573,7 +605,7 @@ ccap compdb show /tmp/captures
 ccap compdb export /tmp/captures -o compile_commands.json
 ```
 
-### 11.5 编译器在哪个类加载器上，决定了能不能抓到
+### 11.6 编译器在哪个类加载器上，决定了能不能抓到
 
 这是实测踩到的最深的一个坑，也是"编译成功、捕获为空、零报错"的典型。
 
@@ -608,6 +640,8 @@ Gradle 踩的就是这个。所以 `CompilerHooks` 里放宽了类加载器匹�
 | `MultiLanguageEndToEndTest` | **ECJ / Kotlin / Scala 3 跑真实编译器** |
 | `Jdk8EndToEndTest` | **在真的 Java 8 JVM 上跑真的编译** |
 | `ClassLoaderCoverageTest` | **编译器在 bootstrap / 应用加载器上都要抓到** |
+| `CaptureLauncherTest` | launcher 的注入逻辑（追加而非替换环境变量） |
+| `CaptureLauncherEndToEndTest` | **launcher 包住 javac / java 真的产出捕获** |
 | `CompilerJdkSupport` | 探测编译器自己认不认当前 JDK（Kotlin 的版本解析） |
 
 `MultiLanguageEndToEndTest` 是最关键的一个：它跑**真的**编译器（ECJ 3.33.0、

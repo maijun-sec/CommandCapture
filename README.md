@@ -883,6 +883,8 @@ modules/
     ccap-jvm-capture/
       src/main/java/org/ccap/jvm/capture/
         CaptureAgent.java        agent 入口（premain / agentmain）
+        CaptureLauncher.java     launcher：给子进程注入 agent
+        Main.java                jar 的入口（分发 attach / launcher）
         CompilerEntryPoints.java 声明式入口点表（每个编译器一张）
         CompilerHooks.java       ByteBuddy Advice 钩子
         CaptureRecorder.java     记录器（bootstrap class loader）
@@ -920,6 +922,17 @@ modules/
 它挂在 javac / ECJ / sjavac / kotlinc / scalac 的入口点上，
 记录编译器**真正执行**的那次编译（真正用的 classpath、真正编译的源文件），
 产物是 JSON 捕获文件，`ccap compdb` 可以直接读进来。
+
+挂载方式：
+
+```bash
+export CCAP_CAPTURE_DIR=/tmp/captures
+
+# launcher：给子进程注入 agent，然后原样执行你的命令
+java -jar ccap-jvm-capture.jar javac -cp lib.jar -d out src/Foo.java
+java -jar ccap-jvm-capture.jar mvn -q clean install
+java -jar ccap-jvm-capture.jar gradle build
+```
 详见 [`docs/zh/JVM-CAPTURE-2026-11-02.md`](docs/zh/JVM-CAPTURE-2026-11-02.md)。
 
 ### 命名规范（参考 LLVM / clang）
