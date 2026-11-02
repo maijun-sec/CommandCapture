@@ -36,6 +36,13 @@ AdapterRegistry::AdapterRegistry() {
     adapters_.push_back(adapters::makeGccAdapter());
     adapters_.push_back(adapters::makeClangAdapter());
     adapters_.push_back(adapters::makeMsvcAdapter());
+    // The JVM languages. They come before the fallback, and each one
+    // only handles its own kind.
+    adapters_.push_back(adapters::makeJavacAdapter());
+    adapters_.push_back(adapters::makeEcjAdapter());
+    adapters_.push_back(adapters::makeKotlinAdapter());
+    adapters_.push_back(adapters::makeScala3Adapter());
+    adapters_.push_back(adapters::makeScala2Adapter());
     adapters_.push_back(adapters::makeGenericAdapter());
 }
 

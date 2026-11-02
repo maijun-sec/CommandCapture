@@ -1,0 +1,249 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  CommandCapture - capture every command a script or executable spawns.
+
+  Copyright (c) 2026 maijun
+
+  SPDX-License-Identifier: MIT
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                              http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.ccap</groupId>
+        <artifactId>ccap-jvm</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>ccap-jvm-capture</artifactId>
+    <name>ccap-jvm-capture</name>
+    <description>
+        A ByteBuddy agent that captures the effective compile performed by a
+        live JVM-language compiler -- javac, ECJ, sjavac, kotlinc, scalac
+        (Scala 3) and scalac (Scala 2).
+
+        The three languages do not share an entry point shape, so the capture
+        is per-language: javac takes its options as an Iterable and its sources
+        as a second Iterable, kotlinc carries them in a generated arguments
+        object, and scalac takes a plain String[]. What they share is the
+        shape that matters -- every compile ends somewhere -- and that is where
+        the capture is written.
+    </description>
+
+    <dependencies>
+        <!-- ByteBuddy: the instrumentation engine. byte-buddy-agent provides
+             the dynamic attach. -->
+        <dependency>
+            <groupId>net.bytebuddy</groupId>
+            <artifactId>byte-buddy</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>net.bytebuddy</groupId>
+            <artifactId>byte-buddy-agent</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- The compilers themselves, as test dependencies.
+             The end-to-end test runs a REAL compile with a real compiler,
+             because that is the only way to prove that the capture works.
+             A mock would prove that the mock works. -->
+        <dependency>
+            <groupId>org.eclipse.jdt</groupId>
+            <artifactId>ecj</artifactId>
+            <version>${ecj.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.jetbrains.kotlin</groupId>
+            <artifactId>kotlin-compiler-embeddable</artifactId>
+            <version>${kotlin.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.jetbrains.kotlin</groupId>
+            <artifactId>kotlin-stdlib</artifactId>
+            <version>${kotlin.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.jetbrains.kotlinx</groupId>
+            <artifactId>kotlinx-coroutines-core-jvm</artifactId>
+            <version>${kotlin.coroutines.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.jetbrains.intellij.deps</groupId>
+            <artifactId>trove4j</artifactId>
+            <version>${trove4j.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.scala-lang</groupId>
+            <artifactId>scala3-compiler_3</artifactId>
+            <version>${scala3.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.scala-lang</groupId>
+            <artifactId>scala3-library_3</artifactId>
+            <version>${scala3.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.scala-lang</groupId>
+            <artifactId>scala3-interfaces</artifactId>
+            <version>${scala3.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.scala-lang</groupId>
+            <artifactId>scala-library</artifactId>
+            <!-- NOT the Scala 3 version. The Scala 3 compiler is published
+                 in two shapes and they pick different standard libraries:
+
+                   Scala 3.3.x  -> scala-library 2.13.x  (the Scala 2
+                                     standard library, which Scala 3 reads
+                                     for the `scala` package)
+                   Scala 3.10.x -> scala-library 3.10.x  (a bootstrapped
+                                     "scala-library-bootstrapped" artifact)
+
+                 So the standard library version has to be tracked on its
+                 own, or the dependency resolves to an artifact that does
+                 not exist. -->
+            <version>${scalaLibrary.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.scala-lang</groupId>
+            <artifactId>tasty-core_3</artifactId>
+            <version>${scala3.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.scala-sbt</groupId>
+            <artifactId>compiler-interface</artifactId>
+            <version>${sbt.compiler.interface.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.scala-sbt</groupId>
+            <artifactId>util-interface</artifactId>
+            <version>${sbt.util.interface.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <profiles>
+        <!-- The compilers that run on Java 8, for the Java 8 end-to-end
+             test. The newest Kotlin and Scala 3 raise their minimum JDK
+             to 17, so the Java 8 test needs the older ones.
+
+             The profile does not *add* the older compilers; it swaps
+             the versions. The older and the newer compiler cannot be on
+             the same classpath: they have the same class names, and the
+             older one wins, which breaks the tests that use the newer
+             one.
+
+             The agent does not depend on any compiler at all; it only
+             hooks whichever compiler is running. -->
+        <profile>
+            <id>jdk8-compilers</id>
+            <properties>
+                <kotlin.version>${jdk8.kotlin.version}</kotlin.version>
+                <scala3.version>${jdk8.scala3.version}</scala3.version>
+                <scalaLibrary.version>${jdk8.scalaLibrary.version}</scalaLibrary.version>
+            </properties>
+        </profile>
+    </profiles>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <!-- The main sources are compiled for Java 8, because the
+                         agent has to load on Java 8; see the parent's
+                         maven.compiler.release.
+
+                         The test sources are compiled for Java 17, because
+                         they run on the build's JDK and have no such
+                         constraint. Splitting the two is what keeps the
+                         agent's floor honest without making the tests
+                         contorted: the tests are free to use Path.of and
+                         text blocks, the agent is not.
+
+                         The compiler plugin takes the release from the
+                         parent for the main sources, and this execution
+                         overrides it for the test sources. -->
+                    <executions>
+                        <execution>
+                            <id>default-testCompile</id>
+                            <goals>
+                                <goal>testCompile</goal>
+                            </goals>
+                            <configuration>
+                                <release>${maven.compiler.testRelease}</release>
+                            </configuration>
+                        </execution>
+                    </executions>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <!-- The distributed artifact: the agent, with
+                             ByteBuddy inside it. It replaces the main
+                             artifact, so the module's jar IS the agent. -->
+                        <id>agent-jar</id>
+                        <phase>package</phase>
+                        <goals><goal>shade</goal></goals>
+                        <configuration>
+                            <!-- The agent has to be self-contained: a
+                                 -javaagent jar is loaded with only its own
+                                 classes on the classpath, so ByteBuddy has to
+                                 be inside it. -->
+                            <shadedArtifactAttached>false</shadedArtifactAttached>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                        <exclude>module-info.class</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>org.ccap.jvm.capture.CaptureAgent</mainClass>
+                                    <manifestEntries>
+                                        <Premain-Class>org.ccap.jvm.capture.CaptureAgent</Premain-Class>
+                                        <Agent-Class>org.ccap.jvm.capture.CaptureAgent</Agent-Class>
+                                        <Can-Redefine-Classes>true</Can-Redefine-Classes>
+                                        <Can-Retransform-Classes>true</Can-Retransform-Classes>
+                                    </manifestEntries>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                            </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  CommandCapture - capture every command a script or executable spawns.
+
+  Copyright (c) 2026 maijun
+
+  SPDX-License-Identifier: MIT
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                              http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>org.ccap</groupId>
+    <artifactId>ccap-jvm</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+
+    <name>ccap-jvm</name>
+    <description>
+        Bytecode-augmented capture of JVM-language compiles.
+
+        Some projects cannot be introspected statically: the classpath may be
+        assembled by a script, a plugin, or an IDE. For those, the ground truth
+        is the compile the compiler actually performs.
+
+        This module hooks the compiler entry points of the three JVM languages
+        and records the *effective* compile -- the classpath that was actually
+        used, the source path, the encoding, the language level, the source
+        files and the output directory.
+
+        The entry points are declarative (CompilerEntryPoints), so adding one is
+        a data change. The hooks are ByteBuddy Advice, which is inlined into
+        the hooked method and therefore needs neither a super method nor a hand
+        written ASM visitor.
+    </description>
+
+    <modules>
+        <module>ccap-jvm-capture</module>
+    </modules>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+        <!-- The agent's own class file version, and therefore the JDK the
+             agent can run on.
+
+             The agent is loaded into the compiler's JVM with -javaagent, so
+             it has to load on whatever JDK the build runs on. A large share
+             of the JVM installations still on Java 8 run their builds
+             there, and a Java 11 agent would simply fail to load there:
+             the build would go on and produce no capture at all, silently.
+
+             So the agent is compiled for Java 8. That is a real language
+             downgrade and not a one-line change: the sources must not use
+             records (Java 16), switch expressions (Java 14), pattern
+             matching in instanceof (Java 16), or any API that arrived
+             after Java 8: Path.of, String.isBlank, List.of, List.copyOf,
+             Files.readString, InputStream.readAllBytes, Stream.toList,
+             Method.trySetAccessible, ClassLoader.getPlatformClassLoader.
+
+             The ones that are used are in Jdk8, which is the single place
+             that has to be kept in step with the floor. The test
+             AgentJdkCompatibilityTest is the gate that keeps them honest.
+
+             The compilers this module captures all run on Java 8 too, so
+             nothing is lost: javac 8, ECJ, sjavac, kotlinc up to 2.4.x and
+             scalac 2.13 all work. -->
+        <maven.compiler.release>8</maven.compiler.release>
+
+        <!-- The tests run on the build's JDK, not on the JDK the agent
+             captures a compile on, so they have no floor to honour. They
+             are compiled for Java 17, which is what the build itself
+             uses. -->
+        <maven.compiler.testRelease>17</maven.compiler.testRelease>
+
+        <!-- ByteBuddy: the instrumentation engine.
+             The version matters, and it matters in two directions.
+
+             (1) Newer JDKs. ByteBuddy checks the class file version of
+                 everything it instruments and refuses to touch a class from
+                 a JDK it does not know about. 1.18.x knows Java 25 and
+                 beyond (its ClassFileVersion enum goes to JAVA_V28), and
+                 since 1.17.0 it extends to unknown versions through the
+                 JDK Class File API. 1.14.19 stopped at Java 23, which is
+                 why it failed on the JDK 25 this project is tested against.
+
+             (2) Older JDKs. 1.18.x is NOT a barrier for old runtimes: its
+                 base classes are Java 8 bytecode (major version 52) and the
+                 jar is multi-release, so one artifact both loads on Java 8
+                 and handles Java 25 class files. The official matrix says
+                 "1.18.7 -> Java 25+, minimum JVM 8". A separate
+                 1.18.7-jdk5 artifact exists for Java 5/6/7 runtimes.
+
+             So one version covers the whole JDK 8+ range, and there is no
+             need for several implementations or several packages.
+
+             The agent's own floor is set by maven.compiler.release below,
+             not by ByteBuddy. -->
+        <bytebuddy.version>1.18.17</bytebuddy.version>
+        <junit.version>5.10.2</junit.version>
+        <assertj.version>3.26.3</assertj.version>
+        <maven.compiler.plugin.version>3.13.0</maven.compiler.plugin.version>
+        <maven.surefire.plugin.version>3.2.5</maven.surefire.plugin.version>
+        <maven.shade.plugin.version>3.5.3</maven.shade.plugin.version>
+
+        <!-- The compilers the end-to-end test drives.
+             The versions are the ones the entry points were verified against
+             with javap: the capture hooks a method that has to exist, so the
+             version and the entry point table have to agree.
+
+             These are the versions that run on the newest JDK, which is
+             what the test suite runs on. The JDK 8 test uses the same
+             entry points, and they are present in the older compilers too:
+             Kotlin's K2JVMCompiler#main and KtPsiFactory#createFile exist
+             since 1.3, and Scala 3's Driver#doCompile and Run#files exist
+             since 3.0. So the JDK 8 test drives the older compilers
+             without the entry point table changing.
+
+             The compiler versions that run on Java 8:
+               javac  8
+               ECJ    any recent version
+               Kotlin  up to 2.4.x (2.5 raises the minimum to JDK 17)
+               Scala 3 3.3 LTS to 3.7 (3.8 raises the minimum to JDK 17)
+               Scala 2 2.13 -->
+        <ecj.version>3.33.0</ecj.version>
+        <kotlin.version>2.2.0</kotlin.version>
+        <kotlin.coroutines.version>1.8.0</kotlin.coroutines.version>
+        <trove4j.version>1.0.20200330</trove4j.version>
+        <scala3.version>3.10.0</scala3.version>
+        <!-- The Scala standard library that goes with the Scala 3 version
+             above. It is NOT the same version: Scala 3.3.x pairs with the
+             Scala 2 standard library (2.13.x), while Scala 3.10.x ships a
+             bootstrapped "scala-library-bootstrapped" artifact of its own
+             version. The JDK 8 profile has to swap this together with the
+             compiler version, or the dependency does not resolve. -->
+        <scalaLibrary.version>3.10.0</scalaLibrary.version>
+        <sbt.compiler.interface.version>1.12.0</sbt.compiler.interface.version>
+        <sbt.util.interface.version>1.11.5</sbt.util.interface.version>
+
+        <!-- The compilers the Java 8 end-to-end test drives.
+             These are the newest versions of each compiler that still run
+             on a Java 8 JVM, and they are the ones a JDK 8 project would
+             actually use. -->
+        <jdk8.kotlin.version>2.1.0</jdk8.kotlin.version>
+        <jdk8.scala3.version>3.3.4</jdk8.scala3.version>
+        <!-- Scala 3.3.4 reads the Scala 2 standard library. -->
+        <jdk8.scalaLibrary.version>2.13.16</jdk8.scalaLibrary.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>net.bytebuddy</groupId>
+                <artifactId>byte-buddy</artifactId>
+                <version>${bytebuddy.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>net.bytebuddy</groupId>
+                <artifactId>byte-buddy-agent</artifactId>
+                <version>${bytebuddy.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter</artifactId>
+                <version>${junit.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.assertj</groupId>
+                <artifactId>assertj-core</artifactId>
+                <version>${assertj.version}</version>
+                <scope>test</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${maven.compiler.plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${maven.surefire.plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-shade-plugin</artifactId>
+                    <version>${maven.shade.plugin.version}</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>

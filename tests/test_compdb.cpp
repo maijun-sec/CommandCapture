@@ -549,7 +549,10 @@ void testAdapters() {
     }
 
     // Adapter count
-    check("registry has 4 adapters", reg.all().size() == 4,
+    //
+    // Four native adapters (gcc, clang, msvc, generic) plus the five
+    // JVM ones (javac, ecj, kotlin, scala3, scala2).
+    check("registry has 9 adapters", reg.all().size() == 9,
           "actual=" + std::to_string(reg.all().size()));
 }
 
@@ -1028,6 +1031,178 @@ void testClangTranslation() {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 13. The JVM capture format
+//
+// Background: the JVM capture agent writes **one JSON file per compile**.
+// The format is not a command line -- it is the *effective* compile: the
+// classpath the compiler actually used, the sources it actually compiled.
+//
+// These tests pin the two things that are easy to get wrong:
+//
+//   1. The compiler kinds join with the capture's compiler names without
+//      a mapping table -- "javac" in the capture is "javac" in the table.
+//
+//   2. The classpath reaches the consumer. Without it the types of every
+//      referenced library are unknown, and the capture is worth much less
+//      than the command line it came from.
+// ═══════════════════════════════════════════════════════════════════════════
+
+void testJvmCaptures() {
+    std::printf("\n=== 13. JVM capture parsing ===\n");
+
+    // Two captures, concatenated the way a directory of them reads.
+    std::string text =
+        R"({"api":"cli","compiler":"javac","language":"java","argv":["-d","out","Hello.java"],"classpath":["lib.jar","classes"],"sourcePath":["src"],"modulePath":["mods"],"processorPath":[],"outputDirectory":"out","sourceFiles":["Hello.java"],"languageLevel":"17","compilation":true,"workingDirectory":"/build"})"
+        "\n"
+        R"({"api":"api","compiler":"kotlin","language":"kotlin","argv":["-classpath","lib.jar","-d","out","Main.kt"],"classpath":["lib.jar"],"sourcePath":[],"modulePath":[],"processorPath":[],"outputDirectory":"out","sourceFiles":["Main.kt"],"languageLevel":null,"compilation":true,"workingDirectory":"/build"})"
+        "\n";
+
+    CommandParser p;
+    auto cmds = p.parseJvmCaptures(text);
+
+    check("parsed 2 JVM captures", cmds.size() == 2,
+          "actual=" + std::to_string(cmds.size()));
+
+    if (cmds.size() == 2) {
+        check("capture 1 is javac", cmds[0].kind == CompilerKind::Javac,
+              compilerKindName(cmds[0].kind));
+        check("capture 2 is kotlin", cmds[1].kind == CompilerKind::Kotlin,
+              compilerKindName(cmds[1].kind));
+
+        check("capture 1 keeps its sources",
+              cmds[0].sourceFiles.size() == 1 &&
+                  cmds[0].sourceFiles[0] == "Hello.java",
+              join(cmds[0].sourceFiles, ","));
+
+        check("capture 1 keeps the classpath",
+              cmds[0].classpathDirs.size() == 2 &&
+                  cmds[0].classpathDirs[0] == "lib.jar" &&
+                  cmds[0].classpathDirs[1] == "classes",
+              join(cmds[0].classpathDirs, ","));
+
+        check("capture 1 keeps the source path",
+              cmds[0].systemDirs.size() == 1 &&
+                  cmds[0].systemDirs[0] == "src",
+              join(cmds[0].systemDirs, ","));
+
+        check("capture 1 keeps the module path",
+              cmds[0].moduleDirs.size() == 1 &&
+                  cmds[0].moduleDirs[0] == "mods",
+              join(cmds[0].moduleDirs, ","));
+
+        check("capture 1 keeps the language level",
+              cmds[0].languageStandard == "17", cmds[0].languageStandard);
+
+        check("capture 1 keeps the output directory",
+              cmds[0].outputFile == "out", cmds[0].outputFile);
+
+        check("capture 1 keeps the working directory",
+              cmds[0].directory == "/build", cmds[0].directory);
+
+        check("capture 1 keeps the raw command",
+              cmds[0].rawCommand.find("Hello.java") != std::string::npos,
+              cmds[0].rawCommand);
+    }
+
+    // A capture that is not a compilation -- "javac -version" -- is not a
+    // compile command.
+    std::string notACompile =
+        R"({"api":"cli","compiler":"javac","language":"java","argv":["-version"],"compilation":false})";
+    auto skipped = p.parseJvmCaptures(notACompile);
+    check("a non-compilation is skipped", skipped.empty(),
+          "actual=" + std::to_string(skipped.size()));
+
+    // A capture with no compiler at all is not a compile command either.
+    auto noCompiler = p.parseJvmCaptures(R"({"api":"cli","language":"java"})");
+    check("a capture without a compiler is skipped", noCompiler.empty(),
+          "actual=" + std::to_string(noCompiler.size()));
+}
+
+// The JVM adapters translate a capture into the analyser's own form.
+//
+// The classpath is the point: it is the JVM equivalent of the include
+// path, and it is the one thing a consumer cannot do without.
+void testJvmAdapters() {
+    std::printf("\n=== 14. JVM adapters ===\n");
+
+    CommandParser p;
+    auto cmds = p.parseJvmCaptures(
+        R"({"api":"cli","compiler":"javac","language":"java","argv":["-d","out","Hello.java"],"classpath":["lib.jar"],"sourcePath":[],"modulePath":[],"processorPath":[],"outputDirectory":"out","sourceFiles":["Hello.java"],"languageLevel":"17","compilation":true})");
+    if (cmds.size() != 1) {
+        check("parsed the capture for the adapter test", false,
+              "actual=" + std::to_string(cmds.size()));
+        return;
+    }
+
+    AdapterRegistry registry;
+    AdapterContext ctx;
+    const CompilerAdapter* adapter = registry.find(cmds[0]);
+    check("the javac adapter handles a javac capture",
+          adapter && adapter->kind() == CompilerKind::Javac,
+          adapter ? adapter->name() : "none");
+
+    if (adapter) {
+        auto args = adapter->translate(cmds[0], ctx);
+        std::string joined = join(args, " ");
+        check("the translation carries the classpath",
+              joined.find("--classpath") != std::string::npos &&
+                  joined.find("lib.jar") != std::string::npos,
+              joined);
+        check("the translation carries the language level",
+              joined.find("--language-level") != std::string::npos &&
+                  joined.find("17") != std::string::npos,
+              joined);
+        check("the translation carries the source",
+              joined.find("Hello.java") != std::string::npos, joined);
+    }
+
+    // Every JVM compiler kind must have an adapter of its own.
+    check("there is a javac adapter", registry.byKind(CompilerKind::Javac) != nullptr);
+    check("there is an ecj adapter", registry.byKind(CompilerKind::Ecj) != nullptr);
+    check("there is a kotlin adapter", registry.byKind(CompilerKind::Kotlin) != nullptr);
+    check("there is a scala3 adapter", registry.byKind(CompilerKind::Scala3) != nullptr);
+    check("there is a scala2 adapter", registry.byKind(CompilerKind::Scala2) != nullptr);
+}
+
+// The compiler names in a capture and the names in the compiler table
+// have to be the same, so the two join without a mapping table.
+void testJvmCompilerKinds() {
+    std::printf("\n=== 15. JVM compiler kinds ===\n");
+
+    CompilerKind kind = CompilerKind::Unknown;
+    check("javac is a kind", compilerKindFromName("javac", &kind) &&
+                                 kind == CompilerKind::Javac);
+    check("sjavac is javac", compilerKindFromName("sjavac", &kind) &&
+                                 kind == CompilerKind::Javac);
+    check("ecj is a kind", compilerKindFromName("ecj", &kind) &&
+                               kind == CompilerKind::Ecj);
+    check("kotlin is a kind", compilerKindFromName("kotlin", &kind) &&
+                                  kind == CompilerKind::Kotlin);
+    check("scala3 is a kind", compilerKindFromName("scala3", &kind) &&
+                                  kind == CompilerKind::Scala3);
+    check("scala2 is a kind", compilerKindFromName("scala2", &kind) &&
+                                  kind == CompilerKind::Scala2);
+
+    // The name a kind is written under must be the name the capture uses.
+    check("the javac kind is named javac",
+          std::string(compilerKindName(CompilerKind::Javac)) == "javac");
+    check("the kotlin kind is named kotlin",
+          std::string(compilerKindName(CompilerKind::Kotlin)) == "kotlin");
+
+    // And the executable names have to be recognized by the table, so
+    // that a build log's "javac ..." line is a compile command.
+    CompilerTable table = CompilerTable::builtin();
+    check("the table recognizes javac",
+          table.matchBaseName("javac") == CompilerKind::Javac);
+    check("the table recognizes kotlinc",
+          table.matchBaseName("kotlinc") == CompilerKind::Kotlin);
+    check("the table recognizes scalac",
+          table.matchBaseName("scalac") == CompilerKind::Scala3);
+    check("the table recognizes ecj",
+          table.matchBaseName("ecj") == CompilerKind::Ecj);
+}
+
 }  // namespace
 
 int main() {
@@ -1045,6 +1220,9 @@ int main() {
     testCaptureEvents();
     testBom();
     testClangTranslation();
+    testJvmCaptures();
+    testJvmAdapters();
+    testJvmCompilerKinds();
 
     std::printf("\n===================================\n");
     std::printf("PASS: %d   FAIL: %d\n", gPass, gFail);

@@ -1,4 +1,4 @@
-﻿# CommandCapture
+# CommandCapture
 
 <!-- i18n:begin -->
 中文 | [**English**](README.md)
@@ -866,6 +866,7 @@ modules/
  filter_rules.cpp script/linker/assembler filtering
  compdb_exporter.cpp export the clang compilation database / analyzer translation commands
  clang_translator.cpp translate any compiler's command into a real clang command
+ jvm_capture_parser.cpp parse the JSON captures produced by the JVM capture agent
  config.cpp JSON configuration loading
  adapters/
  adapter_registry.cpp adapter registry
@@ -873,8 +874,27 @@ modules/
  clang_adapter.cpp Clang
  msvc_adapter.cpp MSVC cl.exe
  generic_adapter.cpp fallback
+ jvm_adapter.cpp javac / ECJ / Kotlin / Scala
  include/
  ccap_compdb.h
+
+ ccap_jvm/ JVM language compile capture (a ByteBuddy agent, a Maven module)
+ ccap-jvm-capture/
+ src/main/java/org/ccap/jvm/capture/
+ CaptureAgent.java the agent entry point (premain / agentmain)
+ CompilerEntryPoints.java the declarative entry point table (one per compiler)
+ CompilerHooks.java the ByteBuddy Advice hooks
+ CaptureRecorder.java the recorder (on the bootstrap class loader)
+ CompiledSourcesBridge.java the cross-module visible bridge (bootstrap)
+ BootstrapClosure.java computes the bootstrap class closure from the bytecode
+ CompilerOption.java the per-compiler option tables
+ JvmOptions.java option parsing
+ CaptureEntry.java the capture's data model
+ CaptureReader.java reads the captures back
+ SourcePaths.java reads paths out of the compiler's own objects
+ Jdk8.java replacements for the APIs that Java 8 does not have
+ Supported JDKs: 8 and up (the agent itself is compiled to Java 8 byte code)
+ docs: docs/en/JVM-CAPTURE-2026-11-02.md
 
  ccap/ CLI entry point
  app/
@@ -887,11 +907,19 @@ modules/
  ccap_compdb ──► ccap_core
  ccap_capture ──► ccap_core
  ccap ──────────► ccap_capture, ccap_compdb
+ ccap_jvm      ──► (standalone; depends on none of the above)
 ```
 
 `ccap_compdb` **does not depend on** `ccap_capture` -- it only consumes "a string of command lines + a working directory",
 so it can consume the compile commands produced by CMake / ninja / the various build tools,
 without having to run the capture itself.
+
+`ccap_jvm` is a standalone module too: it is a **Java agent** (not a C++ library),
+built with Maven, and it produces `ccap-jvm-capture.jar`.
+It hooks the entry points of javac / ECJ / sjavac / kotlinc / scalac and records the
+compile the compiler **actually performed** -- the classpath it really used, the source
+files it really compiled. The output is a JSON capture file, which `ccap compdb` reads
+directly. See [`docs/en/JVM-CAPTURE-2026-11-02.md`](docs/en/JVM-CAPTURE-2026-11-02.md).
 
 ### Naming convention (modeled on LLVM / clang)
 

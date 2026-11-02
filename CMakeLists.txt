@@ -184,6 +184,7 @@ add_library(ccap_compdb STATIC
   modules/ccap_compdb/compdb/compiler_table.cpp
   modules/ccap_compdb/compdb/alias_resolver.cpp
   modules/ccap_compdb/compdb/command_parser.cpp
+  modules/ccap_compdb/compdb/jvm_capture_parser.cpp
   modules/ccap_compdb/compdb/compile_command.cpp
   modules/ccap_compdb/compdb/filter_rules.cpp
   modules/ccap_compdb/compdb/compdb_exporter.cpp
@@ -194,6 +195,7 @@ add_library(ccap_compdb STATIC
   modules/ccap_compdb/adapters/clang_adapter.cpp
   modules/ccap_compdb/adapters/msvc_adapter.cpp
   modules/ccap_compdb/adapters/generic_adapter.cpp
+  modules/ccap_compdb/adapters/jvm_adapter.cpp
 )
 target_link_libraries(ccap_compdb PUBLIC ccap_core)
 set_target_properties(ccap_compdb PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -210,6 +212,7 @@ add_library(ccap_compdb_shared SHARED
   modules/ccap_compdb/compdb/compiler_table.cpp
   modules/ccap_compdb/compdb/alias_resolver.cpp
   modules/ccap_compdb/compdb/command_parser.cpp
+  modules/ccap_compdb/compdb/jvm_capture_parser.cpp
   modules/ccap_compdb/compdb/compile_command.cpp
   modules/ccap_compdb/compdb/filter_rules.cpp
   modules/ccap_compdb/compdb/compdb_exporter.cpp
@@ -220,6 +223,7 @@ add_library(ccap_compdb_shared SHARED
   modules/ccap_compdb/adapters/clang_adapter.cpp
   modules/ccap_compdb/adapters/msvc_adapter.cpp
   modules/ccap_compdb/adapters/generic_adapter.cpp
+  modules/ccap_compdb/adapters/jvm_adapter.cpp
 )
 target_link_libraries(ccap_compdb_shared PUBLIC ccap_core)
 target_include_directories(ccap_compdb_shared
@@ -458,11 +462,36 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(docs_translation PROPERTIES
     SKIP_RETURN_CODE 2
     TIMEOUT 300)
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # POM 注释门禁
+  #
+  # XML 注释里不能出现 "--"。Maven 的解析器遇到一个就把**整个 POM** 判为
+  # 不可解析，而错误信息指向的是**位置**而不是那段文字：
+  #
+  #   in comment after two dashes (--) next character must be >
+  #
+  # 也就是说，报错不会告诉你"哪句话里有个双横线"，只告诉你大概在第几行 ——
+  # 而注释里恰恰是最容易顺手写破折号的地方。
+  #
+  # 这不是假想问题：写 ccap_jvm 模块的注释时反复踩到。
+  #
+  # 退出码：
+  #   0 = 通过
+  #   1 = 有 POM 的注释里含 "--"
+  # ─────────────────────────────────────────────────────────────────────────────
+  add_test(NAME pom_comments
+    COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_pom_comments.py")
+  set_tests_properties(pom_comments PROPERTIES
+    SKIP_RETURN_CODE 2
+    TIMEOUT 300)
 else()
   message(STATUS "Python3 not found - the naming gate test will not be added")
   message(STATUS "Python3 not found - the license gate test will not be added")
   message(STATUS "Python3 not found - the docs i18n gate test will not be added")
   message(STATUS "Python3 not found - the docs translation gate test will not be added")
+  message(STATUS "Python3 not found - the POM comment gate test will not be added")
 endif()
 
 # ─────────────────────────────────────────────────────────────────────────────

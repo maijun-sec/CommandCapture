@@ -41,6 +41,11 @@ prototypes/**/obj/
 # 编译数据库（由 CMAKE_EXPORT_COMPILE_COMMANDS 生成）
 compile_commands.json
 
+# Maven 构建产物（modules/ccap_jvm 是 Java 模块）
+modules/ccap_jvm/**/target/
+# maven-shade-plugin 生成的中间 POM
+dependency-reduced-pom.xml
+
 # Python 缓存
 __pycache__/
 *.pyc

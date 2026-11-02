@@ -68,6 +68,11 @@ const char* compilerKindName(CompilerKind kind) {
         case CompilerKind::Msvc:    return "msvc";
         case CompilerKind::Iar:     return "iar";
         case CompilerKind::Generic: return "generic";
+        case CompilerKind::Javac:   return "javac";
+        case CompilerKind::Ecj:     return "ecj";
+        case CompilerKind::Kotlin:  return "kotlin";
+        case CompilerKind::Scala3:  return "scala3";
+        case CompilerKind::Scala2:  return "scala2";
         default:                    return "unknown";
     }
 }
@@ -83,6 +88,13 @@ bool compilerKindFromName(const std::string& name, CompilerKind* out) {
     }
     if (l == "iar")     { *out = CompilerKind::Iar;     return true; }
     if (l == "generic") { *out = CompilerKind::Generic; return true; }
+    // The JVM languages. The names match the ones the capture agent
+    // records, so the two can be joined without a mapping table.
+    if (l == "javac" || l == "sjavac") { *out = CompilerKind::Javac; return true; }
+    if (l == "ecj")   { *out = CompilerKind::Ecj;     return true; }
+    if (l == "kotlin" || l == "kotlinc") { *out = CompilerKind::Kotlin; return true; }
+    if (l == "scala3" || l == "scala") { *out = CompilerKind::Scala3; return true; }
+    if (l == "scala2") { *out = CompilerKind::Scala2; return true; }
     if (l == "unknown") { *out = CompilerKind::Unknown; return true; }
     return false;
 }
@@ -189,6 +201,48 @@ CompilerTable CompilerTable::builtin() {
         r.kind = CompilerKind::Iar;
         r.id = "iar";
         r.exactNames = { "iccarm", "iccarm.exe", "iarc", "ilink" };
+        t.addRule(r);
+    }
+
+    // ── The JVM languages ─────────────────────────────────────────────
+    //
+    // These are matched by executable name, because that is how a build
+    // invokes them. The rules are here so that a command line captured
+    // from a build log is recognized as a compile command rather than
+    // being dropped as an unknown tool.
+    {
+        CompilerRule r;
+        r.kind = CompilerKind::Javac;
+        r.id = "javac";
+        r.exactNames = { "javac", "javac.exe", "sjavac" };
+        t.addRule(r);
+    }
+    {
+        CompilerRule r;
+        r.kind = CompilerKind::Ecj;
+        r.id = "ecj";
+        r.exactNames = { "ecj", "ecj.exe" };
+        t.addRule(r);
+    }
+    {
+        CompilerRule r;
+        r.kind = CompilerKind::Kotlin;
+        r.id = "kotlin";
+        r.exactNames = { "kotlinc", "kotlinc.bat", "kotlin", "kotlin.bat" };
+        t.addRule(r);
+    }
+    {
+        CompilerRule r;
+        r.kind = CompilerKind::Scala3;
+        r.id = "scala3";
+        r.exactNames = { "scalac", "scalac.bat", "scala3", "scala3.bat", "dotc" };
+        t.addRule(r);
+    }
+    {
+        CompilerRule r;
+        r.kind = CompilerKind::Scala2;
+        r.id = "scala2";
+        r.exactNames = { "scalac2", "scala" };
         t.addRule(r);
     }
 

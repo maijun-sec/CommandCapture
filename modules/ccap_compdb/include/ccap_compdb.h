@@ -50,6 +50,23 @@ enum class CompilerKind {
     Msvc,       // MSVC cl.exe
     Iar,        // IAR EW
     Generic,    // fallback: generic extraction of -I/-D only
+
+    // ── The JVM languages ─────────────────────────────────────────────
+    //
+    // These are the compilers the JVM capture agent hooks. They are
+    // **not** native compilers: they produce class files, not object
+    // files, and their options are their own.
+    //
+    // They are separate kinds rather than one "jvm" kind because each
+    // compiler has its own option syntax, and a consumer that knows the
+    // difference between a Kotlin compile and a Scala compile can do
+    // more with the capture. The adapter for each kind is isolated, just
+    // like the native ones.
+    Javac,      // javac (and sjavac, which drives javac)
+    Ecj,        // Eclipse's compiler
+    Kotlin,     // kotlinc / K2
+    Scala3,     // Scala 3 (dotc)
+    Scala2,     // Scala 2 (nsc)
 };
 
 const char* compilerKindName(CompilerKind kind);
@@ -203,6 +220,26 @@ struct CompileCommand {
     std::vector<std::string> systemDirs;     // -isystem / /external:I
     std::vector<std::string> frameworkDirs; // -F (macOS)
 
+    // ── The JVM languages ─────────────────────────────────────────────
+    //
+    // A JVM compile is described by its classpath, not by its include
+    // path. The native fields above are reused for the native compilers;
+    // these three are the JVM ones, and they are only filled in by the
+    // JVM capture parser.
+    //
+    //   classpathDirs   -- the jars and class directories the compiler
+    //                      reads types from
+    //   moduleDirs      -- the module path
+    //   processorDirs   -- the annotation processor path
+    //
+    // They are separate from includeDirs because the two are genuinely
+    // different things: a consumer that has to pick the right one -- for
+    // example to search a jar for a class rather than a directory for a
+    // header -- cannot afford to have them confused.
+    std::vector<std::string> classpathDirs;
+    std::vector<std::string> moduleDirs;
+    std::vector<std::string> processorDirs;
+
     // Force-included headers: -include <file> / /FI<file>.
     //
     // A forced include changes the **meaning** of the translation unit
@@ -319,6 +356,48 @@ public:
     // Only events with source == "runtime" are taken (the static layer is
     // script builtin commands, there is no process).
     std::vector<CompileCommand> parseCaptureEvents(const std::string& text) const;
+
+    // Parse the JVM capture agent's JSON files
+    //
+    // The agent writes **one JSON object per file**, not a stream: each
+    // file is one capture, and a directory of them is the capture set.
+    // The text is therefore a concatenation of JSON objects, and this
+    // parses them all.
+    //
+    // The format is the one the capture agent writes:
+    //   {
+    //     "api": "cli",                  // or "api"
+    //     "compiler": "javac",           // javac/ecj/sjavac/kotlin/scala3/scala2
+    //     "language": "java",            // java/kotlin/scala
+    //     "argv": ["-d", "out", "Hello.java"],
+    //     "classpath": ["lib.jar"],
+    //     "sourcePath": [],
+    //     "modulePath": [],
+    //     "processorPath": [],
+    //     "outputDirectory": "out",
+    //     "sourceFiles": ["Hello.java"],
+    //     "languageLevel": "17",
+    //     "compilation": true,
+    //     "workingDirectory": "/build"
+    //   }
+    //
+    // **Why the fields are used as they are.** The argv is kept as the
+    // raw command, because that is what a consumer that wants to replay
+    // the compile needs. But the *effective* compile -- the classpath the
+    // compiler actually used, the sources it actually compiled -- comes
+    // from the structured fields, because the argv alone does not say
+    // them: the API path has no argv at all, and the classpath may have
+    // come from the environment.
+    std::vector<CompileCommand> parseJvmCaptures(const std::string& text) const;
+
+    // Parse the JVM capture files in a directory
+    //
+    // The files are read in name order, so the result is deterministic.
+    // A file that cannot be read or parsed is skipped rather than
+    // failing the whole import: one broken capture must not lose the
+    // others.
+    std::vector<CompileCommand> parseJvmCaptureDirectory(
+        const std::string& directory) const;
 
     // Set the compiler table (affects kind determination)
     void setCompilerTable(const CompilerTable& table) { table_ = table; }
@@ -451,6 +530,16 @@ const CompilerAdapter* makeGccAdapter();
 const CompilerAdapter* makeClangAdapter();
 const CompilerAdapter* makeMsvcAdapter();
 const CompilerAdapter* makeGenericAdapter();
+
+// The JVM language adapters.
+//
+// One per compiler kind, because the option syntax differs and the
+// adapters are isolated from each other by design.
+const CompilerAdapter* makeJavacAdapter();
+const CompilerAdapter* makeEcjAdapter();
+const CompilerAdapter* makeKotlinAdapter();
+const CompilerAdapter* makeScala3Adapter();
+const CompilerAdapter* makeScala2Adapter();
 }  // namespace adapters
 
 // ═══════════════════════════════════════════════════════════════════════════

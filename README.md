@@ -1,4 +1,4 @@
-﻿# CommandCapture
+# CommandCapture
 
 <!-- i18n:begin -->
 [**English**](README.en.md) | 中文
@@ -867,6 +867,7 @@ modules/
       filter_rules.cpp   脚本/链接器/汇编器过滤
       compdb_exporter.cpp 导出 clang 编译数据库 / 分析器翻译命令
       clang_translator.cpp 把任意编译器的命令翻译成真正的 clang 命令
+      jvm_capture_parser.cpp 解析 JVM 捕获 agent 产生的 JSON 捕获
       config.cpp         JSON 配置加载
     adapters/
       adapter_registry.cpp  适配器注册表
@@ -874,8 +875,27 @@ modules/
       clang_adapter.cpp     Clang
       msvc_adapter.cpp      MSVC cl.exe
       generic_adapter.cpp   兜底
+      jvm_adapter.cpp       javac / ECJ / Kotlin / Scala
     include/
       ccap_compdb.h
+
+  ccap_jvm/              JVM 语言编译捕获（ByteBuddy agent，Maven 模块）
+    ccap-jvm-capture/
+      src/main/java/org/ccap/jvm/capture/
+        CaptureAgent.java        agent 入口（premain / agentmain）
+        CompilerEntryPoints.java 声明式入口点表（每个编译器一张）
+        CompilerHooks.java       ByteBuddy Advice 钩子
+        CaptureRecorder.java     记录器（bootstrap class loader）
+        CompiledSourcesBridge.java 跨模块可见的桥（bootstrap）
+        BootstrapClosure.java    从字节码算出 bootstrap 类闭包
+        CompilerOption.java      每编译器一张的选项表
+        JvmOptions.java          选项解析
+        CaptureEntry.java        捕获的数据模型
+        CaptureReader.java       读回捕获
+        SourcePaths.java         从编译器自己的对象里取路径
+        Jdk8.java                Java 8 上没有的 API 的替代实现
+    支持的 JDK：8 及以上（agent 自身编译为 Java 8 字节码）
+    docs: docs/zh/JVM-CAPTURE-2026-11-02.md
 
   ccap/                 CLI 入口
     app/
@@ -888,11 +908,19 @@ modules/
    ccap_compdb ──► ccap_core
    ccap_capture ──► ccap_core
    ccap ──────────► ccap_capture, ccap_compdb
+   ccap_jvm      ──► （独立，不依赖上面任何一个）
 ```
 
 `ccap_compdb` **不依赖** `ccap_capture` —— 它只吃「一串命令行 + 一个工作目录」，
 所以能吃 CMake / ninja / 各家构建工具产生的编译命令，
 不一定要自己跑捕获。
+
+`ccap_jvm` 也是一个独立模块：它是一个 **Java agent**（不是 C++ 库），
+用 Maven 构建，产出 `ccap-jvm-capture.jar`。
+它挂在 javac / ECJ / sjavac / kotlinc / scalac 的入口点上，
+记录编译器**真正执行**的那次编译（真正用的 classpath、真正编译的源文件），
+产物是 JSON 捕获文件，`ccap compdb` 可以直接读进来。
+详见 [`docs/zh/JVM-CAPTURE-2026-11-02.md`](docs/zh/JVM-CAPTURE-2026-11-02.md)。
 
 ### 命名规范（参考 LLVM / clang）
 

@@ -23,8 +23,11 @@
 // every other subcommand only consumes command line text from files.
 
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -69,6 +72,43 @@ bool looksLikeJson(const std::string& text) {
     size_t b = 0;
     while (b < text.size() && std::isspace(static_cast<unsigned char>(text[b]))) ++b;
     return b < text.size() && text[b] == '{' || text[b] == '[';
+}
+
+// Is this path a directory of JVM captures?
+//
+// The capture agent writes **one JSON file per capture**, into a
+// directory it is told about. So a directory of `*.json` files whose
+// contents have a "compiler" field is a capture set, not a single
+// document.
+//
+// The check is by content, not by name: a directory of captures is
+// recognized by what is in it, so a user does not have to name it in a
+// particular way.
+bool isJvmCaptureDirectory(const std::string& path) {
+    std::error_code ec;
+    if (!std::filesystem::is_directory(path, ec)) return false;
+
+    // One file is enough: the directory is a capture set if its captures
+    // carry the capture agent's own fields.
+    for (const auto& entry : std::filesystem::directory_iterator(path, ec)) {
+        if (!entry.is_regular_file(ec)) continue;
+        if (entry.path().extension() != ".json") continue;
+
+        std::ifstream in(entry.path(), std::ios::binary);
+        if (!in) continue;
+        std::ostringstream buffer;
+        buffer << in.rdbuf();
+        std::string text = buffer.str();
+
+        // The capture agent's files always have a "compiler" field, and
+        // always have a "language" field. The compilation database does
+        // not, and ccap's own event stream does not either.
+        if (text.find("\"compiler\"") != std::string::npos &&
+            text.find("\"language\"") != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // Build the compiler table from the config
@@ -290,6 +330,12 @@ namespace {
 std::vector<CompileCommand> parseFileAuto(const CommandParser& parser,
                                              const std::string& path,
                                              std::string* err) {
+    // A directory of JVM captures is its own format: the agent writes one
+    // JSON file per compile, so there is no single document to parse.
+    if (isJvmCaptureDirectory(path)) {
+        return parser.parseJvmCaptureDirectory(path);
+    }
+
     std::string text;
     if (!readInput(path, &text, err)) return {};
 
