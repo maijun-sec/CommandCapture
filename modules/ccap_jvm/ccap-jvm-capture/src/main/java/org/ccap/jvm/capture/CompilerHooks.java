@@ -544,11 +544,76 @@ public final class CompilerHooks {
   /**
    * Install the agent.
    *
+   * <p><b>Why the class loader matcher has to be widened.</b> ByteBuddy's {@code AgentBuilder.Default}
+   * ignores two class loaders by default: the bootstrap loader (a null loader) and the platform loader.
+   * A compiler class loaded by either of them is therefore never transformed -- and the advice never
+   * fires, which means the compile succeeds, no capture appears, and nothing says why.
+   *
+   * <p>This is not a theoretical case. The same javac, reached through different class paths, is loaded
+   * by different loaders:
+   *
+   * <ul>
+   *   <li>{@code java -cp tools.jar com.sun.tools.javac.Main} -- the application loader, transformed, and
+   *       the capture works.
+   *   <li>{@code -Xbootclasspath/a:tools.jar} -- the bootstrap loader, ignored, and the capture is
+   *       silently empty.
+   *   <li>A JDK 9+ build where {@code jdk.compiler} is loaded by the platform loader -- ignored, and the
+   *       capture is silently empty.
+   * </ul>
+   *
+   * <p>The compiler is the thing being observed, so the loader it happens to live in must not decide
+   * whether it is observed. The matcher below therefore lets the bootstrap and platform loaders
+   * through.
+   *
+   * <p><b>Why that is safe here.</b> The matcher is combined with the type matcher, so only the
+   * compiler's own classes -- the ones named in {@link CompilerEntryPoints} -- are ever transformed,
+   * and only their named methods are woven into. The bootstrap loader's other classes are untouched.
+   *
+   * <p>The default ignore list is <em>replaced</em> rather than extended, and that is deliberate but
+   * has to be done carefully: ByteBuddy's default list also protects ByteBuddy's own classes and the
+   * reflection internals from being instrumented. The replacement below keeps that protection and
+   * only drops the loader restriction, so the set of types that can be transformed is still exactly
+   * the compiler's own types.
+   *
    * @param inst the instrumentation interface
    */
   static void install(Instrumentation inst) {
     new AgentBuilder.Default()
         .disableClassFormatChanges()
+        // ByteBuddy ignores the bootstrap loader and the platform loader by
+        // default. The compiler's classes can live in either of them, and an
+        // ignored class is a silently missing capture.
+        //
+        // The default ignore list is replaced here: it is a disjunction of
+        // (type matcher, class loader matcher, module matcher) triples, and
+        // the loader clause is the one that has to go. The type clauses
+        // that protect ByteBuddy's own classes and the reflection
+        // internals are kept.
+        .ignore(
+            new AgentBuilder.RawMatcher() {
+
+              @Override
+              public boolean matches(
+                  TypeDescription typeDescription,
+                  ClassLoader classLoader,
+                  net.bytebuddy.utility.JavaModule module,
+                  Class<?> classBeingRedefined,
+                  java.security.ProtectionDomain protectionDomain) {
+                if (classLoader == null
+                    || classLoader.getClass().getName().equals("jdk.internal.loader.ClassLoaders$PlatformClassLoader")) {
+                  // The bootstrap and the platform loader are the ones
+                  // ByteBuddy excludes by default. The compiler's classes
+                  // can be loaded by either of them.
+                  return false;
+                }
+                // Everything else keeps ByteBuddy's own protection: its
+                // classes, the reflection internals, and synthetic types.
+                return typeDescription.getName().startsWith("net.bytebuddy.")
+                    || typeDescription.getName().startsWith("sun.reflect.")
+                    || typeDescription.getName().startsWith("jdk.internal.reflect.")
+                    || typeDescription.isSynthetic();
+              }
+            })
         .with(
             new AgentBuilder.Listener.Adapter() {
 

@@ -3,7 +3,7 @@
 > 设计文档 · 2026-11-02
 >
 > 模块位置：`modules/ccap_jvm/`
-> 状态：已实现，Maven 89 个测试通过（其中 4 个 Java 8 端到端测试在提供 JDK 8 时才跑）；
+> 状态：已实现，Maven 91 个测试通过（其中 4 个 Java 8 端到端测试在提供 JDK 8 时才跑）；
 > ECJ / Kotlin / Scala 3 三个端到端测试驱动真实编译器。
 > 支持的 JDK：**8 及以上** —— agent 自身编译为 Java 8 字节码。
 
@@ -505,6 +505,11 @@ CompilerJdkSupport.runsOnJava8("scala3-compiler_3-")
 
 ## 11. 用法
 
+### 11.1 把 agent 挂上去
+
+**这一层不修改命令行，也不自动注入。** 它要求 agent 已经被挂上 ——
+挂载是构建配置的事，捕获是 agent 的事。
+
 ```bash
 # 编译时挂上 agent
 java -javaagent:ccap-jvm-capture.jar \
@@ -513,20 +518,79 @@ java -javaagent:ccap-jvm-capture.jar \
 
 # 或者挂到已经在跑的 JVM 上
 java -cp ccap-jvm-capture.jar org.ccap.jvm.capture.CaptureAgent attach <pid>
+```
 
-# 然后把捕获读进来
+### 11.2 三个命令实测能不能加 `-javaagent`
+
+**结论先行：`javac` 命令行不能直接加 `-javaagent`，Maven 和 Gradle 能，但方式不同。**
+
+| 命令 | 能不能加 `-javaagent` | 用什么方式 |
+|---|---|---|
+| `javac` | ❌ **不能** | `javac` 的选项解析器不认 JVM 参数，会报"无效的标记" |
+| `mvn` | ✅ | `MAVEN_OPTS` |
+| `gradle` | ⚠️ **有坑** | `JAVA_TOOL_OPTIONS`（**不是** `org.gradle.jvmargs`） |
+
+**`javac` 为什么不行**：它自己是个程序，不是 JVM 启动器。`-javaagent` 是 JVM 参数，
+只能给 `java` 用。所以要挂 javac，得走 `java -cp tools.jar com.sun.tools.javac.Main`，
+或者用 `JAVA_TOOL_OPTIONS`（JVM 启动时会读，任何 java 进程都带上）。
+
+**Maven**（默认 `fork=false`，编译在 Maven 自己的 JVM 里）：
+
+```bash
+MAVEN_OPTS="-javaagent:/path/ccap-jvm-capture.jar=ccap.capture.dir=/tmp/captures" mvn clean install
+```
+
+**Gradle —— `org.gradle.jvmargs` 不行**，实测报 `Unrecognized option: -javaagent=...`：
+
+```
+Process command line: java.exe --add-opens=... -javaagent=... -Dfile.encoding=UTF-8 -cp gradle-daemon-main.jar ...
+                                                                        ^^^^^^^^^^^^^ 在 -cp 之后
+```
+
+`-javaagent` 出现在 `-cp` **之后**，JVM 就把它当成 classpath 之后的**应用程序参数**，
+而不是 JVM 参数。Gradle 拼 `org.gradle.jvmargs` 时就是这么拼的（它自己的
+instrumentation agent 也在这个位置）。
+
+**能用的是 `JAVA_TOOL_OPTIONS`** —— 它在 JVM 启动**之前**注入，位置永远正确：
+
+```bash
+JAVA_TOOL_OPTIONS="-javaagent:/path/ccap-jvm-capture.jar=ccap.capture.dir=/tmp/captures" gradle build
+```
+
+> 顺带一提：Gradle 用 toolchain 时，编译器类来自 toolchain 那个 JDK 的 `tools.jar`，
+> 由**扩展类加载器**持有 —— 这正是下面 11.4 那个坑的成因。
+
+### 11.3 agent 的参数
+
+`-javaagent:jar=key=value` 的 `key=value` 会变成系统属性。**这是 Gradle 里唯一能配的通道**，
+因为 Gradle 转发 `-javaagent`，但不转发 `-D`。
+
+### 11.4 捕获读回来
+
+```bash
 ccap compdb parse /tmp/captures
 ccap compdb show /tmp/captures
 ccap compdb export /tmp/captures -o compile_commands.json
 ```
 
-Gradle 里用 agent 参数（因为 Gradle 会转发 `-javaagent`，但不转发 `-D`）：
+### 11.5 编译器在哪个类加载器上，决定了能不能抓到
 
-```
-org.gradle.jvmargs=-javaagent:/path/ccap-jvm-capture.jar=ccap.capture.dir=/tmp/captures
-```
+这是实测踩到的最深的一个坑，也是"编译成功、捕获为空、零报错"的典型。
 
-agent 的**参数**会变成系统属性 —— 这是 Gradle 里唯一能配的通道。
+ByteBuddy 的 `AgentBuilder.Default` **默认忽略两个类加载器**：bootstrap 和 platform。
+被它们加载的编译器类**永远不会被织入**，advice 不会触发，编译照常成功，捕获一个都没有。
+
+| 编译器的类加载器 | 抓得到吗 |
+|---|---|
+| 应用类加载器（`java -cp tools.jar`） | ✅ |
+| **bootstrap**（`-Xbootclasspath/a:tools.jar`） | ❌ 默认被忽略 |
+| **platform**（JDK 9+ 的 `jdk.compiler` 模块） | ❌ 默认被忽略 |
+
+Gradle 踩的就是这个。所以 `CompilerHooks` 里放宽了类加载器匹配：
+**只放宽 loader 限制，保留 ByteBuddy 对自己类和反射内部的保护**。
+
+`ClassLoaderCoverageTest` 守着这条线 —— 它分别用应用加载器和 bootstrap 加载器
+跑一次真编译，断言两次都有捕获。实测：修复前第二个用例失败，修复后两个都过。
 
 ---
 
@@ -543,6 +607,7 @@ agent 的**参数**会变成系统属性 —— 这是 Gradle 里唯一能配的
 | `CaptureEndToEndTest` | javac 命令行 + `javax.tools` API |
 | `MultiLanguageEndToEndTest` | **ECJ / Kotlin / Scala 3 跑真实编译器** |
 | `Jdk8EndToEndTest` | **在真的 Java 8 JVM 上跑真的编译** |
+| `ClassLoaderCoverageTest` | **编译器在 bootstrap / 应用加载器上都要抓到** |
 | `CompilerJdkSupport` | 探测编译器自己认不认当前 JDK（Kotlin 的版本解析） |
 
 `MultiLanguageEndToEndTest` 是最关键的一个：它跑**真的**编译器（ECJ 3.33.0、

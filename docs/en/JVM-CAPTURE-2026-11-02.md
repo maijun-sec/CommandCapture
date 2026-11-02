@@ -3,7 +3,7 @@
 > Design document · 2026-11-02
 >
 > Module location: `modules/ccap_jvm/`
-> Status: implemented; 89 Maven tests pass (four of them, the Java 8 end-to-end
+> Status: implemented; 91 Maven tests pass (four of them, the Java 8 end-to-end
 > tests, only run when a Java 8 JDK is provided). The ECJ / Kotlin / Scala 3
 > end-to-end tests drive the real compilers.
 > Supported JDKs: **8 and up** -- the agent itself is compiled to Java 8 byte code.
@@ -552,6 +552,12 @@ compiler is not meant for Java 8".
 
 ## 11. Usage
 
+### 11.1 Attaching the agent
+
+**This layer does not modify command lines, and it does not inject anything by itself.** It expects
+the agent to be attached already -- attaching it is the build configuration's job, capturing is the
+agent's job.
+
 ```bash
 # Attach the agent to a compile
 java -javaagent:ccap-jvm-capture.jar \
@@ -560,22 +566,86 @@ java -javaagent:ccap-jvm-capture.jar \
 
 # Or attach it to a JVM that is already running
 java -cp ccap-jvm-capture.jar org.ccap.jvm.capture.CaptureAgent attach <pid>
+```
 
-# Then read the captures back in
+### 11.2 Can the three commands take a `-javaagent`?
+
+**The short answer: the `javac` command line cannot take one directly. Maven and Gradle can, but
+not the way you would expect.**
+
+| Command | Can it take `-javaagent`? | How |
+|---|---|---|
+| `javac` | **No** | `javac`'s own option parser does not know JVM options |
+| `mvn` | Yes | `MAVEN_OPTS` |
+| `gradle` | **With a catch** | `JAVA_TOOL_OPTIONS`, *not* `org.gradle.jvmargs` |
+
+**Why `javac` cannot.** It is a program, not a JVM launcher. `-javaagent` is a JVM option, and only
+`java` takes JVM options. So attaching to javac means going through
+`java -cp tools.jar com.sun.tools.javac.Main`, or using `JAVA_TOOL_OPTIONS` -- which the JVM reads
+at startup, so every java process picks it up.
+
+**Maven** (the default `fork=false`, where the compile happens in Maven's own JVM):
+
+```bash
+MAVEN_OPTS="-javaagent:/path/ccap-jvm-capture.jar=ccap.capture.dir=/tmp/captures" mvn clean install
+```
+
+**Gradle -- `org.gradle.jvmargs` does not work.** Measured: `Unrecognized option: -javaagent=...`
+
+```
+Process command line: java.exe --add-opens=... -javaagent=... -Dfile.encoding=UTF-8 -cp gradle-daemon-main.jar ...
+                                                                        ^^^^^^^^^^^^^ after -cp
+```
+
+A `-javaagent` that appears **after** `-cp` is an *application* argument, not a JVM option. That is
+where Gradle puts the `org.gradle.jvmargs` entries -- its own instrumentation agent ends up in the
+same place.
+
+**`JAVA_TOOL_OPTIONS` works**, because it is injected before the JVM starts, so the position is
+always right:
+
+```bash
+JAVA_TOOL_OPTIONS="-javaagent:/path/ccap-jvm-capture.jar=ccap.capture.dir=/tmp/captures" gradle build
+```
+
+> While measuring this: when Gradle uses a toolchain, the compiler classes come from that JDK's
+> `tools.jar`, held by the **extension class loader**. That is the cause of the trap in 11.5.
+
+### 11.3 The agent's arguments
+
+The `key=value` part of `-javaagent:jar=key=value` becomes system properties. **That is the one
+channel Gradle lets through**, because Gradle forwards `-javaagent` but drops every `-D`.
+
+### 11.4 Reading the captures back
+
+```bash
 ccap compdb parse /tmp/captures
 ccap compdb show /tmp/captures
 ccap compdb export /tmp/captures -o compile_commands.json
 ```
 
-Inside Gradle, use the agent's arguments (because Gradle forwards `-javaagent` but drops every
-`-D`):
+### 11.5 Which class loader holds the compiler decides whether it is captured
 
-```
-org.gradle.jvmargs=-javaagent:/path/ccap-jvm-capture.jar=ccap.capture.dir=/tmp/captures
-```
+This is the deepest trap found while measuring, and it is the classic shape of "the compile
+succeeded, the capture is empty, and nothing says why".
 
-The agent's **arguments** become system properties -- that is the one channel Gradle lets
-through.
+ByteBuddy's `AgentBuilder.Default` **ignores two class loaders by default**: the bootstrap loader
+and the platform loader. A compiler class loaded by either of them is **never woven into**, the
+advice never fires, the compile succeeds perfectly, and not one capture appears.
+
+| The compiler's class loader | Captured? |
+|---|---|
+| the application loader (`java -cp tools.jar`) | Yes |
+| **bootstrap** (`-Xbootclasspath/a:tools.jar`) | **No -- ignored by default** |
+| **platform** (the `jdk.compiler` module on JDK 9+) | **No -- ignored by default** |
+
+Gradle hits exactly this. So `CompilerHooks` widens the class loader matcher: it relaxes **only**
+the loader restriction, and keeps ByteBuddy's own protection of its own classes and the reflection
+internals.
+
+`ClassLoaderCoverageTest` guards that line -- it runs a real compile through the application loader
+and through the bootstrap loader, and asserts that both produce a capture. Measured: before the
+fix the second case failed; after it, both pass.
 
 ---
 
@@ -592,6 +662,7 @@ through.
 | `CaptureEndToEndTest` | the javac command line and the `javax.tools` API |
 | `MultiLanguageEndToEndTest` | **ECJ / Kotlin / Scala 3, with the real compilers** |
 | `Jdk8EndToEndTest` | **a real compile on a real Java 8 JVM** |
+| `ClassLoaderCoverageTest` | **the compiler must be caught on the bootstrap and the application loader** |
 | `CompilerJdkSupport` | probes whether the compiler recognises the current JDK (Kotlin's version parsing) |
 
 `MultiLanguageEndToEndTest` is the critical one: it runs the **real** compilers (ECJ 3.33.0,
