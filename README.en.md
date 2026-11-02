@@ -933,6 +933,18 @@ java -jar ccap-jvm-capture.jar javac -cp lib.jar -d out src/Foo.java
 java -jar ccap-jvm-capture.jar mvn -q clean install
 java -jar ccap-jvm-capture.jar gradle build
 ```
+
+Or let **ccap inject it itself** -- no build script changes, one entry point for every language:
+
+```bash
+ccap compdb capture --jvm-agent /path/ccap-jvm-capture.jar \
+                     --jvm-capture-dir /tmp/captures \
+                     --output compile_commands.json \
+                     -- mvn -q clean install
+```
+
+See [`docs/en/JVM-CAPTURE-2026-11-02.md`](docs/en/JVM-CAPTURE-2026-11-02.md).
+
 ### Naming convention (modeled on LLVM / clang)
 
 For the full rules see [`docs/en/NAMING-CONVENTION.md`](docs/en/NAMING-CONVENTION.md).

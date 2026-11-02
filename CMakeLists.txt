@@ -61,6 +61,7 @@ add_library(ccap_core STATIC
   modules/ccap_core/core/json.cpp
   modules/ccap_core/core/json_parser.cpp
   modules/ccap_core/core/command_line.cpp
+  modules/ccap_core/core/agent_inject.cpp
   modules/ccap_core/core/normalize.cpp
   modules/ccap_core/core/script_scanner.cpp
   modules/ccap_core/core/powershell_scanner.cpp
@@ -185,6 +186,7 @@ add_library(ccap_compdb STATIC
   modules/ccap_compdb/compdb/alias_resolver.cpp
   modules/ccap_compdb/compdb/command_parser.cpp
   modules/ccap_compdb/compdb/jvm_capture_parser.cpp
+  modules/ccap_compdb/compdb/jvm_merge.cpp
   modules/ccap_compdb/compdb/compile_command.cpp
   modules/ccap_compdb/compdb/filter_rules.cpp
   modules/ccap_compdb/compdb/compdb_exporter.cpp
@@ -213,6 +215,7 @@ add_library(ccap_compdb_shared SHARED
   modules/ccap_compdb/compdb/alias_resolver.cpp
   modules/ccap_compdb/compdb/command_parser.cpp
   modules/ccap_compdb/compdb/jvm_capture_parser.cpp
+  modules/ccap_compdb/compdb/jvm_merge.cpp
   modules/ccap_compdb/compdb/compile_command.cpp
   modules/ccap_compdb/compdb/filter_rules.cpp
   modules/ccap_compdb/compdb/compdb_exporter.cpp
@@ -308,6 +311,21 @@ if(MSVC)
   target_compile_options(test_compdb PRIVATE /utf-8)
 endif()
 add_test(NAME compdb COMMAND test_compdb)
+
+# JVM agent 注入 + 两份视图合并 的单元测试
+#
+# 注入逻辑在 ccap_core（纯算法，不碰平台 API），
+# 合并逻辑在 ccap_compdb，所以两个库都要链。
+add_executable(test_agent_inject tests/test_agent_inject.cpp)
+target_link_libraries(test_agent_inject PRIVATE ccap_compdb ccap_core)
+target_include_directories(test_agent_inject PRIVATE
+  ${CCAP_MODULES_DIR}/ccap_compdb
+  ${CCAP_MODULES_DIR}/ccap_compdb/include
+)
+if(MSVC)
+  target_compile_options(test_agent_inject PRIVATE /utf-8)
+endif()
+add_test(NAME agent_inject COMMAND test_agent_inject)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # C ABI 验证程序

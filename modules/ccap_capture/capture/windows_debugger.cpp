@@ -18,6 +18,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "core/agent_inject.h"
 #include "core/command_line.h"
 #include "core/normalize.h"
 #include "capture/peb_reader.h"
@@ -273,6 +274,65 @@ CaptureResult runWindowsDebugger(const CaptureOptions& opts,
                 envBlock.push_back(L'\0');
             }
             FreeEnvironmentStringsW(env);
+        }
+    }
+
+    // Attach the JVM capture agent, if one was asked for.
+    //
+    // The environment is where it goes, and not the command line, because
+    // on Windows the command line of a child process cannot be changed
+    // after the fact: by the time this debugger sees
+    // CREATE_PROCESS_DEBUG_EVENT the PEB is already mapped and the
+    // command line has been handed to the C runtime.
+    //
+    // The environment is inherited, so one injection here covers the whole
+    // process tree: mvn -> java -> javac and gradle -> daemon -> javac
+    // both carry it through. Measured.
+    if (!opts.agentJar.empty()) {
+        char existing[4096];
+        existing[0] = '\0';
+        DWORD got = GetEnvironmentVariableA("JAVA_TOOL_OPTIONS", existing,
+                                            static_cast<DWORD>(sizeof(existing)));
+        std::string existingValue;
+        if (got > 0 && got < sizeof(existing)) {
+            existingValue.assign(existing, got);
+        }
+
+        std::string options = ccap::buildJavaToolOptions(existingValue,
+                                                         opts.agentJar,
+                                                         opts.agentCaptureDir);
+        if (!options.empty()) {
+            // Rebuild the block with the variable replaced. The block is a
+            // sequence of "NAME=VALUE" strings, each terminated by a NUL,
+            // and the whole block by an extra NUL.
+            std::wstring updated;
+            bool replaced = false;
+            std::wstring nameW = utf8ToWide("JAVA_TOOL_OPTIONS=");
+            for (size_t i = 0; i < envBlock.size();) {
+                size_t end = envBlock.find(L'\0', i);
+                if (end == std::wstring::npos) {
+                    break;
+                }
+                std::wstring entry = envBlock.substr(i, end - i);
+                if (entry.compare(0, nameW.size(), nameW) == 0) {
+                    // Replace the existing value rather than adding a second
+                    // entry: Windows takes the first occurrence, and a
+                    // duplicate would silently win over the new one.
+                    updated += nameW + utf8ToWide(options);
+                    updated.push_back(L'\0');
+                    replaced = true;
+                } else {
+                    updated += entry;
+                    updated.push_back(L'\0');
+                }
+                i = end + 1;
+            }
+            if (!replaced) {
+                updated += nameW + utf8ToWide(options);
+                updated.push_back(L'\0');
+            }
+            updated.push_back(L'\0');
+            envBlock = updated;
         }
     }
 

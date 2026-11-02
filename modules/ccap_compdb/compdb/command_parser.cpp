@@ -30,8 +30,30 @@ namespace compdb {
 
 namespace {
 
+// Is this one of the JVM compilers?
+//
+// The JVM languages share their option conventions with each other but not
+// with the native compilers: "-d" is an output **directory** there, and the
+// source extensions are different.
+bool isJvmCompilerKind(CompilerKind kind) {
+    switch (kind) {
+        case CompilerKind::Javac:
+        case CompilerKind::Ecj:
+        case CompilerKind::Kotlin:
+        case CompilerKind::Scala3:
+        case CompilerKind::Scala2:
+            return true;
+        default:
+            return false;
+    }
+}
+
 // Is it a source file extension?
-bool isSourceExtension(const std::string& ext) {
+//
+// The native extensions come first. The JVM languages are asked about
+// separately, because the extension alone does not say what the file is:
+// a ".h" file is a header in C, and a ".java" file is a source in Java.
+bool isNativeSourceExtension(const std::string& ext) {
     static const char* kSourceExts[] = {
         ".c", ".cc", ".cpp", ".cxx", ".c++", ".cp",
         ".m", ".mm",
@@ -41,6 +63,42 @@ bool isSourceExtension(const std::string& ext) {
         if (ext == e) return true;
     }
     return false;
+}
+
+// Is it a source file extension for this compiler?
+//
+// Why the compiler has to be known:
+//
+//   The JVM languages have source extensions that the native list does
+//   not contain -- ".java", ".kt", ".scala". Without this, a javac
+//   command line ends up with **no** source files, and that is not a
+//   cosmetic problem:
+//
+//     * the command is treated as a link-only command and dropped from
+//       the compile database, and
+//     * the merge with the agent's capture cannot match it, because the
+//       merge keys on the output directory plus the source set -- one
+//       side has sources and the other does not.
+//
+//   So a javac command would be recorded twice (once from the command
+//   line, once from the agent) instead of once.
+bool isSourceExtension(const std::string& ext, CompilerKind kind) {
+    if (isNativeSourceExtension(ext)) {
+        return true;
+    }
+
+    switch (kind) {
+        case CompilerKind::Javac:
+        case CompilerKind::Ecj:
+            return ext == ".java";
+        case CompilerKind::Kotlin:
+            return ext == ".kt" || ext == ".kts";
+        case CompilerKind::Scala3:
+        case CompilerKind::Scala2:
+            return ext == ".scala";
+        default:
+            return false;
+    }
 }
 
 // Is it a header file extension?
@@ -236,6 +294,32 @@ CompileCommand CommandParser::parseArgv(const std::vector<std::string>& argv,
             continue;
         }
 
+        // ── The JVM output directory ───────────────────────────────────
+        //
+        // javac, ECJ, kotlinc and scalac all take "-d <dir>" (or "-d<dir>")
+        // as the directory the class files go into. It is the JVM
+        // counterpart of "-o": the native option names one output **file**,
+        // this one names an output **directory**.
+        //
+        // Why it has to be recognized here:
+        //
+        //   The merge with the agent's capture keys on the output directory
+        //   plus the source set. The agent reports its output directory in
+        //   "outputDirectory", and this puts the command line's "-d" into
+        //   the same field -- so the two sides agree and the same compile
+        //   is recognized as one compile instead of two.
+        if (isJvmCompilerKind(cmd.kind)) {
+            if (a == "-d") {
+                std::string v;
+                if (takeNext(argv, &i, &v)) cmd.outputFile = v;
+                continue;
+            }
+            if (a.rfind("-d", 0) == 0 && a.size() > 2 && a[1] != '-') {
+                cmd.outputFile = a.substr(2);
+                continue;
+            }
+        }
+
         // ── Include path ───────────────────────────────────────────────
         if (a == "-I" || a == "/I") {
             std::string v;
@@ -400,7 +484,7 @@ CompileCommand CommandParser::parseArgv(const std::vector<std::string>& argv,
         }
 
         std::string ext = ccap::extensionOf(a);
-        if (isSourceExtension(ext)) {
+        if (isSourceExtension(ext, cmd.kind)) {
             cmd.sourceFiles.push_back(a);
         } else if (isHeaderExtension(ext)) {
             // A header file compiled directly (rare, but it happens)

@@ -660,7 +660,111 @@ ccap compdb show /tmp/captures
 ccap compdb export /tmp/captures -o compile_commands.json
 ```
 
-### 11.6 Which class loader holds the compiler decides whether it is captured
+### 11.6 One entry point: ccap injects the agent itself
+
+**This is the least effort**: no build script changes, and no fiddling with `MAVEN_OPTS` or
+`JAVA_TOOL_OPTIONS`.
+
+```bash
+ccap compdb capture --jvm-agent /path/ccap-jvm-capture.jar \
+                     --jvm-capture-dir /tmp/captures \
+                     --output compile_commands.json \
+                     -- mvn -q clean install
+```
+
+ccap puts `JAVA_TOOL_OPTIONS` into the **environment** when it creates the root process, and the
+whole process tree inherits it -- so the user does not change a single command.
+
+**Why the environment and not the command line**: see 11.2. In short, the `javac` command line
+does not accept a `-javaagent` at all, and Gradle places it after `-cp`, where it does not work.
+`JAVA_TOOL_OPTIONS` is the one channel that works for all three.
+
+**Why the environment is the only option on Windows too**: on Windows a child process's command
+line cannot be changed after the fact -- by the time the debugger sees
+`CREATE_PROCESS_DEBUG_EVENT`, the PEB is already mapped and the command line has been handed to
+the C runtime. The environment has no such problem, because it is inherited, so one injection
+covers the whole tree.
+
+Measured: both `mvn -> java -> javac` and `gradle -> daemon -> javac` carry it through.
+
+> On Linux the argv could be rewritten -- the `execve` hook owns it -- but that only works for
+> `java`, not for `javac`, so the environment variable is the more uniform choice anyway.
+
+### 11.7 Merging the two views
+
+The same compile is seen twice:
+
+| Source | What it sees | What it misses |
+|---|---|---|
+| **ccap** | the command line | globs are unexpanded, the classpath may have been assembled by a plugin, the API path has no argv at all |
+| **the agent** | the sources really compiled, the classpath really used | it does not know which executable the compiler was |
+
+The merge rule: **the agent's version wins** (it is the ground truth), ccap's version fills in
+what the agent cannot know (the compiler path), and **a compile only ccap saw is kept** (the ones
+the agent could not hook).
+
+They are matched by the **output directory and the source file set**, not by the command line --
+the two views rarely agree on the command line.
+
+> ⚠️ **Both sides have to describe the same thing for the merge to hold.**
+>
+> The merge key has two fields: the **output directory** and the **source file set**. Both
+> views have to fill both of them in, and they have to spell them the same way -- otherwise
+> one compile is recorded twice:
+>
+> | Field | ccap's side | The agent's side |
+> |---|---|---|
+> | Source files | recognized by **the compiler kind** (`.java` / `.kt` / `.scala`) | the files the compiler really compiled |
+> | Output directory | the JVM `-d <dir>` option | `outputDirectory` in the capture |
+>
+> Two traps:
+>
+> 1. **`.java` is not a native extension.** The earlier parser only knew the C/C++
+>    extensions, so a javac command line ended up with **no source files at all** -- it was
+>    treated as a link-only command and dropped, and it did not match the agent's side
+>    (one had sources, the other did not).
+> 2. **The two sides spell the path differently.** The agent reports the path the compiler
+>    was handed (`D:\out`), ccap reports the normalized one (`D:/out`). The merge key
+>    normalizes before comparing: the separators are unified, the case is unified (Windows
+>    is case-insensitive), and a trailing slash is dropped.
+>
+> The measured result now: one Maven compile produces **one** entry in
+> `compile_commands.json`, with the classpath, sourcepath, encoding and language level all
+> present.
+
+### 11.8 Known limitation: Gradle's daemon cannot be reached
+
+**This is a pre-existing ccap limitation, not an agent problem.**
+
+Measured: Gradle does not run under ccap, with `Could not connect to the Gradle daemon`.
+
+**The cause**: ccap's Windows side uses the `DEBUG_PROCESS` debugger, and a socket connection
+between two processes **inside** the debugged tree is blocked.
+
+Measured:
+
+| Scenario | Result |
+|---|---|
+| a connection inside one process | works |
+| a process in ccap → a server **outside** ccap | works |
+| a process in ccap → another process **inside** ccap | times out |
+
+Gradle's client and its daemon are both in the tree, so they cannot reach each other.
+
+**The workaround**: start a daemon outside ccap first, and let ccap reuse it:
+
+```bash
+gradle --daemon help          # start one first
+ccap compdb capture --jvm-agent ... -- gradle build   # reuse it, the build runs
+```
+
+But then the daemon has no agent, so **the capture is empty**. So on Windows, Gradle can only be
+used through the launcher of 11.3 for now; it cannot go through the unified ccap entry point.
+
+Maven is not affected: its compile is **in process**, so there is no daemon and no cross-process
+socket.
+
+### 11.9 Which class loader holds the compiler decides whether it is captured
 
 This is the deepest trap found while measuring, and it is the classic shape of "the compile
 succeeded, the capture is empty, and nothing says why".
@@ -702,6 +806,8 @@ fix the second case failed; after it, both pass.
 | `CaptureLauncherTest` | the launcher's injection logic (appends, never replaces) |
 | `CaptureLauncherEndToEndTest` | **the launcher really captures, through javac and java** |
 | `CompilerJdkSupport` | probes whether the compiler recognises the current JDK (Kotlin's version parsing) |
+
+On the C++ side: `test_agent_inject` (building the injected value, and merging the two views).
 
 `MultiLanguageEndToEndTest` is the critical one: it runs the **real** compilers (ECJ 3.33.0,
 kotlin-compiler 2.2.0, scala3-compiler 3.10.0 -- all `test` scope dependencies). Because a

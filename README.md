@@ -933,6 +933,16 @@ java -jar ccap-jvm-capture.jar javac -cp lib.jar -d out src/Foo.java
 java -jar ccap-jvm-capture.jar mvn -q clean install
 java -jar ccap-jvm-capture.jar gradle build
 ```
+
+或者让 **ccap 自己注入** —— 不用改构建脚本，一个入口管所有语言：
+
+```bash
+ccap compdb capture --jvm-agent /path/ccap-jvm-capture.jar \
+                     --jvm-capture-dir /tmp/captures \
+                     --output compile_commands.json \
+                     -- mvn -q clean install
+```
+
 详见 [`docs/zh/JVM-CAPTURE-2026-11-02.md`](docs/zh/JVM-CAPTURE-2026-11-02.md)。
 
 ### 命名规范（参考 LLVM / clang）

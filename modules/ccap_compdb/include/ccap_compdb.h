@@ -407,6 +407,45 @@ private:
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Merging the two views of a JVM compile
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Merge the compile commands ccap saw with the ones the JVM agent captured.
+//
+// WHY BOTH
+//
+//   The two sources answer different questions, and neither is complete on
+//   its own:
+//
+//     * ccap sees the **command line** the compiler was started with. That
+//       is always there -- but it does not say what the compiler really
+//       did: a glob is still unexpanded, the classpath may have been
+//       assembled by a plugin, and the API path (javax.tools) has no argv
+//       at all.
+//
+//     * the agent sees what the compiler **actually did**: the sources it
+//       really compiled, the classpath it really used. But it only sees
+//       compiles that went through a compiler it could hook.
+//
+//   So the agent's version wins where both have an entry -- it carries the
+//   ground truth -- and ccap's version fills in the compiles the agent
+//   missed.
+//
+// HOW THEY ARE MATCHED
+//
+//   By the **output directory and the source file set**, not by the
+//   command line. The command line differs between the two views (the
+//   agent's argv is what the compiler was handed, which is not what ccap
+//   saw on the command line), while the output directory and the sources
+//   identify the same compile.
+//
+// @param fromCcap the commands ccap recorded
+// @param fromAgent the commands the agent captured
+// @return the merged list
+std::vector<CompileCommand> mergeJvmCommands(const std::vector<CompileCommand>& fromCcap,
+                                             const std::vector<CompileCommand>& fromAgent);
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Filter rules
 // ═══════════════════════════════════════════════════════════════════════════
 

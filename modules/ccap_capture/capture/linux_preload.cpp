@@ -46,6 +46,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "core/agent_inject.h"
 #include "core/command_line.h"
 #include "core/normalize.h"
 #include "capture/linux_preload.h"
@@ -389,6 +390,23 @@ CaptureResult runLinuxPreload(const RunOptions& opts,
 
         setenv("LD_PRELOAD", shim.c_str(), 1);
         setenv(kShimFdEnv, "3", 1);
+
+        // Attach the JVM capture agent, if one was asked for.
+        //
+        // On Linux the environment is the right place for the same reason
+        // it is on Windows: the JVM reads JAVA_TOOL_OPTIONS before it
+        // starts, and the environment is inherited by every process the
+        // target starts. So one injection covers the whole tree.
+        if (!opts.agentJar.empty()) {
+            const char* existing = getenv("JAVA_TOOL_OPTIONS");
+            std::string options = ccap::buildJavaToolOptions(
+                existing ? std::string(existing) : std::string(),
+                opts.agentJar,
+                opts.agentCaptureDir);
+            if (!options.empty()) {
+                setenv("JAVA_TOOL_OPTIONS", options.c_str(), 1);
+            }
+        }
 
         // Redirect stdout to stderr (optional) --
         // ccap's own stdout keeps only the capture data, so the JSON can be

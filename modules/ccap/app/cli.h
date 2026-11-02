@@ -81,6 +81,16 @@ struct Options {
     std::vector<std::string> excludes;
     std::vector<std::string> excludeStrs;
     std::vector<std::string> includes;
+
+    // The JVM capture agent to attach to the target, and the directory its
+    // captures go into.
+    //
+    // When the agent jar is given, ccap attaches it to the whole process
+    // tree by putting JAVA_TOOL_OPTIONS into the environment of the root
+    // process -- see core/agent_inject.h for why the environment and not
+    // the command line.
+    std::string agentJar;
+    std::string agentCaptureDir;
 };
 
 // Parse the arguments.

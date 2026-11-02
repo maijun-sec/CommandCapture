@@ -605,7 +605,101 @@ ccap compdb show /tmp/captures
 ccap compdb export /tmp/captures -o compile_commands.json
 ```
 
-### 11.6 编译器在哪个类加载器上，决定了能不能抓到
+### 11.6 一个入口：ccap 自己注入 agent
+
+**这是最省事的方式**：不用改构建脚本，也不用管 `MAVEN_OPTS` / `JAVA_TOOL_OPTIONS`。
+
+```bash
+ccap compdb capture --jvm-agent /path/ccap-jvm-capture.jar \
+                     --jvm-capture-dir /tmp/captures \
+                     --output compile_commands.json \
+                     -- mvn -q clean install
+```
+
+ccap 在创建根进程时，把 `JAVA_TOOL_OPTIONS` 放进**环境**，
+整棵进程树自动继承 —— 用户不用改任何命令。
+
+**为什么是环境而不是改命令行**：见 11.2。简单说，
+`javac` 命令行根本不接受 `-javaagent`，而 Gradle 会把它拼到 `-cp` 后面导致失效。
+`JAVA_TOOL_OPTIONS` 是唯一对三个命令都管用的通道。
+
+**为什么 Windows 上也只能用环境**：Windows 上**没法**在"拿到命令之后"再改它的 argv ——
+调试器看到 `CREATE_PROCESS_DEBUG_EVENT` 时，PEB 已经映射好了，命令行也已经交给 C 运行时解析了。
+但环境是**继承**的，所以注入一次就覆盖整棵树。
+
+实测 `mvn -> java -> javac` 和 `gradle -> daemon -> javac` 都能穿透。
+
+> Linux 上其实可以改 argv（`execve` 的 hook 拿到 argv 的控制权），
+> 但那样只对 `java` 有效，对 `javac` 无效 —— 反而不如环境变量统一。
+
+### 11.7 两份视图合并
+
+同一次编译会被看到两次：
+
+| 来源 | 看到什么 | 缺什么 |
+|---|---|---|
+| **ccap** | 命令行 | 通配符没展开、classpath 可能是插件拼的、API 路径根本没有 argv |
+| **agent** | 真正编译的源文件、真正用的 classpath | 不知道编译器可执行文件在哪 |
+
+合并规则：**agent 的版本优先**（它是 ground truth），ccap 的版本补上 agent 不知道的
+（编译器路径），**ccap 单独看到的编译也保留**（agent 没 hook 到的那些）。
+
+匹配靠**输出目录 + 源文件集合**，不是命令行 —— 两个视图的命令行通常不一样。
+
+> ⚠️ **两边必须说的是同一件事，合并才成立。**
+>
+> 合并键里有两个字段：**输出目录**和**源文件集合**。两个视图都得填上它们，
+> 而且得填成同一种写法，否则同一次编译会被记成两次：
+>
+> | 字段 | ccap 这一侧 | agent 这一侧 |
+> |---|---|---|
+> | 源文件 | 按**编译器类型**认扩展名（`.java` / `.kt` / `.scala`） | 编译器真正编译的文件 |
+> | 输出目录 | 认 JVM 的 `-d <dir>` | 捕获里的 `outputDirectory` |
+>
+> 两处坑：
+>
+> 1. **`.java` 不是原生扩展名。** 早期版本的解析器只认 C/C++ 扩展名，
+>    于是 javac 命令行**一个源文件都没有** —— 它被当成"纯链接命令"丢掉了，
+>    而且和 agent 那边对不上（一边有源文件、一边没有）。
+> 2. **路径写法不一样。** agent 报的是编译器拿到的原样路径（`D:\out`），
+>    ccap 报的是规范化过的（`D:/out`）。合并键比较前会统一：
+>    分隔符统一、大小写统一（Windows 不区分大小写）、尾部斜杠去掉。
+>
+> 现在的实测结果：Maven 的一次编译，`compile_commands.json` 里**一条**，
+> classpath、sourcepath、encoding、language level 全在。
+
+### 11.8 ⚠️ 已知的限制：Gradle 的 daemon 连不上
+
+**这是 ccap 既有的限制，与 agent 无关。**
+
+实测：Gradle 在 ccap 下跑不起来，报 `Could not connect to the Gradle daemon`。
+
+**根因**：ccap 的 Windows 侧用 `DEBUG_PROCESS` 调试器，
+被调试进程树**内部**两个进程之间的 socket 连接会被阻断。
+
+实测确认：
+
+| 场景 | 结果 |
+|---|---|
+| 进程内连接（同进程） | ✅ 正常 |
+| ccap 里的进程 → ccap **外**的服务器 | ✅ 正常 |
+| ccap 里的进程 → ccap **内**的另一进程 | ❌ 超时 |
+
+Gradle 的 client 和 daemon 恰好都在树里，所以连不上。
+
+**绕过办法**：先在 ccap 外面起一个 daemon，之后 ccap 复用它：
+
+```bash
+gradle --daemon help          # 先起一个
+ccap compdb capture --jvm-agent ... -- gradle build   # 复用，编译能跑
+```
+
+但这样 daemon 里没有 agent，**捕获是空的** —— 所以 Gradle 在 Windows 上
+目前只能靠 11.3 的 launcher 单独用，不能走 ccap 统一入口。
+
+Maven 不受影响：它的编译是**进程内**的，没有 daemon，也没有跨进程 socket。
+
+### 11.9 编译器在哪个类加载器上，决定了能不能抓到
 
 这是实测踩到的最深的一个坑，也是"编译成功、捕获为空、零报错"的典型。
 
@@ -643,6 +737,8 @@ Gradle 踩的就是这个。所以 `CompilerHooks` 里放宽了类加载器匹�
 | `CaptureLauncherTest` | launcher 的注入逻辑（追加而非替换环境变量） |
 | `CaptureLauncherEndToEndTest` | **launcher 包住 javac / java 真的产出捕获** |
 | `CompilerJdkSupport` | 探测编译器自己认不认当前 JDK（Kotlin 的版本解析） |
+
+C++ 侧的测试：	est_agent_inject（注入值的构造 + 两份视图的合并）。
 
 `MultiLanguageEndToEndTest` 是最关键的一个：它跑**真的**编译器（ECJ 3.33.0、
 kotlin-compiler 2.2.0、scala3-compiler 3.10.0，都是 `test` scope 的依赖）。

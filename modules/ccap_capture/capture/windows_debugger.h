@@ -67,6 +67,15 @@ struct CaptureOptions {
     // But it should be turned on when --format json is used and the output is
     // consumed from a pipe.
     bool redirectOutputToStderr = false;
+
+    // The JVM capture agent to attach to the target's whole process tree,
+    // and the directory its captures go into.
+    //
+    // The agent is attached through JAVA_TOOL_OPTIONS in the environment,
+    // because on Windows a child process's command line cannot be changed
+    // after the fact -- see core/agent_inject.h.
+    std::string agentJar;
+    std::string agentCaptureDir;
 };
 
 // Run the target on Windows as a debugger and collect the command creation

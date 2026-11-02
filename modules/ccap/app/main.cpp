@@ -22,10 +22,16 @@
 
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <iostream>
 #include <map>
 #include <string>
 #include <vector>
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 #include "ccap_compdb.h"
 #include "cli.h"
@@ -53,6 +59,41 @@ namespace {
 
 using ccap::CommandEvent;
 using ccap::EventCollector;
+
+// The directory the JVM agent writes its captures into.
+//
+// When the user did not name one, a directory that only this run uses is
+// made -- the agent needs a directory, and leaving it out would mean the
+// capture goes nowhere while looking like it worked.
+std::string agentCaptureDir(const ccap::cli::Options& cli) {
+    if (!cli.agentCaptureDir.empty()) {
+        return cli.agentCaptureDir;
+    }
+    if (cli.agentJar.empty()) {
+        return std::string();
+    }
+
+    // A name that is unique to this run, so two concurrent captures do
+    // not write into the same place. The pid and the clock are enough:
+    // two processes cannot share a pid at the same time.
+    const long long stamp = static_cast<long long>(::time(nullptr));
+    std::string name = "ccap-jvm-capture-" + std::to_string(stamp);
+#if defined(_WIN32)
+    char base[MAX_PATH + 1] = {0};
+    DWORD got = ::GetTempPathA(MAX_PATH, base);
+    std::string dir = (got > 0) ? std::string(base) : std::string(".");
+    if (dir.size() && dir.back() == '\\') {
+        dir.pop_back();
+    }
+    std::string full = dir + "\\" + name + "-" + std::to_string(::GetCurrentProcessId());
+#else
+    std::string full = "/tmp/" + name + "-" + std::to_string(::getpid());
+#endif
+    if (!::ccap::createDirectoryTree(full)) {
+        return std::string();
+    }
+    return full;
+}
 
 std::string eventToJson(const CommandEvent& e) {
     std::string j = "{";
@@ -316,6 +357,8 @@ int main(int argc, char** argv) {
                     opts.timeoutMs = cli.timeoutMs;
                     opts.quietMs = cli.quietMs;
                     opts.redirectOutputToStderr = true;
+                    opts.agentJar = cli.agentJar;
+                    opts.agentCaptureDir = agentCaptureDir(cli);
 
                     ccap::RunResult rr = ccap::runCapture(opts, &collector);
 
@@ -352,7 +395,23 @@ int main(int argc, char** argv) {
                     }
                     parser.setCompilerTable(table);
 
+                    // The two sources of a JVM compile, merged.
+                    //
+                    // ccap sees the command line the compiler was started
+                    // with; the agent sees what the compiler actually did.
+                    // The agent's version is the richer one -- it knows the
+                    // sources that were really compiled and the classpath
+                    // that was really used -- so it wins, and the command
+                    // line fills in what the agent could not see.
+                    //
+                    // A compile that the agent missed is still worth having:
+                    // the command line alone is a usable compile command.
                     auto cmds = parser.parseCaptureEvents(ndjson);
+
+                    if (!opts.agentCaptureDir.empty()) {
+                        auto fromAgent = parser.parseJvmCaptureDirectory(opts.agentCaptureDir);
+                        cmds = ccap::compdb::mergeJvmCommands(cmds, fromAgent);
+                    }
 
                     ccap::compdb::FilterConfig fc =
                         ccap::compdb::FilterConfig::builtin();
@@ -409,9 +468,24 @@ int main(int argc, char** argv) {
                                          outPath.c_str());
                             return 3;
                         }
+                        // The count has to be the number of entries that
+                        // were actually written, not the number of
+                        // commands that went in. The two differ: a
+                        // link-only command has no compilation unit, so
+                        // the compile database exporter skips it.
+                        //
+                        // Reporting the input count would say "wrote 2
+                        // compile command(s)" over a file that holds one
+                        // -- which reads as a bug in the capture, and
+                        // sends the reader looking for a missing entry
+                        // that was never supposed to be there.
+                        size_t written = 0;
+                        for (const auto& c : kept) {
+                            if (!c.sourceFiles.empty()) ++written;
+                        }
                         std::fprintf(stderr,
                                      "[ccap] wrote %zu compile command(s) to %s\n",
-                                     kept.size(), outPath.c_str());
+                                     written, outPath.c_str());
                     } else {
                         std::fwrite(content.data(), 1, content.size(), stdout);
                     }
@@ -452,6 +526,8 @@ int main(int argc, char** argv) {
         opts.verbose = cli.verbose;
         opts.clearBeingDebugged = cli.clearBeingDebugged;
         opts.redirectOutputToStderr = cli.redirectOutputToStderr;
+        opts.agentJar = cli.agentJar;
+        opts.agentCaptureDir = agentCaptureDir(cli);
 
         rr = ccap::runCapture(opts, &collector);
     }

@@ -71,6 +71,10 @@ void printUsage() {
         "                                   the capture data, so --format json\n"
         "                                   can be piped straight into a\n"
         "                                   consumer)\n"
+        "  --jvm-agent <jar>             attach the JVM capture agent to the\n"
+        "                                 target's whole process tree\n"
+        "  --jvm-capture-dir <dir>       where the agent writes its captures\n"
+        "                                 (default: a temporary directory)\n"
         "  --verbose                      extra diagnostics on stderr\n"
         "\n"
         "compdb options:\n"
@@ -249,6 +253,12 @@ bool parse(int argc, char** argv, Options* out, std::string* err) {
             out->clearBeingDebugged = true;
         } else if (a == "--stdout-to-stderr") {
             out->redirectOutputToStderr = true;
+        } else if (a == "--jvm-agent") {
+            if (!needValue(argc, argv, &i, "--jvm-agent", err)) return false;
+            out->agentJar = argv[i];
+        } else if (a == "--jvm-capture-dir") {
+            if (!needValue(argc, argv, &i, "--jvm-capture-dir", err)) return false;
+            out->agentCaptureDir = argv[i];
         } else if (a == "--config") {
             if (!needValue(argc, argv, &i, "--config", err)) return false;
             out->compdbConfig = argv[i];
