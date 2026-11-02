@@ -38,13 +38,22 @@
 #       A silently ignored setting is the worst kind: it looks like it
 #       is working because the command sometimes succeeds.
 #
-#   So always confirm with GIT_TRACE_CURL=1 and check the "Trying" line
-#   actually names the address you pinned. This script does that check
-#   for you before it trusts a candidate.
+#   So always confirm the pinned route actually works before trusting a
+#   candidate.  This script probes the candidate IP directly and only
+#   uses it when the connection succeeds.
 #
-#   The script tries each candidate in turn, skipping the ones this git
-#   build cannot honour, and falls back to plain git when everything is
+#   The script tries each candidate in turn, skipping the ones that are
+#   not reachable, and falls back to plain git when everything is
 #   unreachable.
+#
+#   WHICH GIT RUNS
+#
+#   On Windows the "bash" on PATH is usually WSL, and WSL's git is
+#   often 2.34 -- which IGNORES http.curloptResolve silently.  The
+#   repository is configured for the Windows git (2.40), which honours
+#   it.  So this script looks for the Windows git and calls it
+#   explicitly, and converts the repository path to a Windows path for
+#   it.  Set CCAP_GIT to override.
 #
 # USAGE
 #   bash tools/git-push.sh push [-u] [--force]
@@ -56,6 +65,8 @@
 #   CCAP_GIT_IPS        Space-separated candidate frontend IPs.
 #   CCAP_GIT_HOST       Hostname to pin (default: github.com).
 #   CCAP_GIT_DIRECT     Set to 1 to bypass pinning and call git directly.
+#   CCAP_GIT            The git binary to run (default: the Windows git
+#                       when found, else the one on PATH).
 #   CCAP_GIT_TIMEOUT    Seconds allowed for one candidate attempt.
 
 set -u
@@ -65,33 +76,99 @@ HOST="${CCAP_GIT_HOST:-github.com}"
 TIMEOUT="${CCAP_GIT_TIMEOUT:-45}"
 IPS="${CCAP_GIT_IPS:-140.82.112.3 140.82.113.3 140.82.114.3 140.82.116.3}"
 
+# The repository path, in the form the git we run understands.
+#
+# Under WSL, $ROOT is a Linux path ("/mnt/d/..."), which the Windows git
+# cannot chdir into.  So when we run the Windows git we have to hand it
+# the Windows path instead.
+GIT_ROOT="$ROOT"
+
+# Which git to run.
+#
+# On Windows the "bash" on PATH is usually WSL, and WSL's git is often
+# 2.34 -- which IGNORES http.curloptResolve silently.  The repository
+# itself is configured for the Windows git, and that one (2.40) does
+# honour the setting.  So when this script runs under WSL it must call
+# the Windows git explicitly, otherwise the pinning below silently
+# does nothing and the push dies against the bad DNS entry.
+#
+# CCAP_GIT overrides it entirely.
+GIT="${CCAP_GIT:-git}"
+if [ "${CCAP_GIT:-}" = "" ]; then
+  # Look for a Windows git that honours the setting.  Where it lives
+  # differs per machine (C: or D:, "Git" or "Program Files"), so try the
+  # usual places instead of hardcoding one.
+  for candidate in \
+    /mnt/c/development/Git/cmd/git.exe \
+    /mnt/d/development/Git/cmd/git.exe \
+    /mnt/c/Program\ Files/Git/cmd/git.exe \
+    /mnt/d/Program\ Files/Git/cmd/git.exe
+  do
+    if [ -x "$candidate" ]; then
+      GIT="$candidate"
+      break
+    fi
+  done
+fi
+
+if [ "$GIT" != "git" ]; then
+  # The Windows git wants a Windows path.
+  case "$ROOT" in
+    /mnt/*)
+      drive="$(printf '%s' "$ROOT" | cut -c6 | tr '[:lower:]' '[:upper:]')"
+      rest="$(printf '%s' "$ROOT" | cut -c7-)"
+      GIT_ROOT="${drive}:${rest}"
+      ;;
+  esac
+fi
+
 log() { echo "  [git-push] $*" >&2; }
+
+log "using git: ${GIT} ($(${GIT} --version 2>/dev/null || echo unknown))"
 
 # Does this git build actually honour http.curloptResolve?
 #
-# We ask for a ref list and look at the trace line that names the
-# address git dialled. If it is not the address we pinned, the setting
-# is being ignored and pinning would be pointless.
+# The trace line git prints is:
+#
+#   == Info:   Trying 140.82.112.3:443...
+#
+# We do not parse that any more; see the comment on the function below
+# for why.
+# Does this git build actually honour http.curloptResolve?
+#
+# WHAT MATTERS IS WHETHER THE PINNED COMMAND WORKS, so that is what we
+# test: run the real command with the pin and see whether it succeeds.
+#
+# The earlier version of this check parsed GIT_TRACE_CURL output and
+# looked for the address git dialled.  That is fragile in two ways:
+#
+#   * The trace line is "Trying 140.82.112.3:443...", so a "[^:]*"
+#     pattern stops at the colon inside the IP and captures only
+#     "Trying 140.82.112" -- which never compares equal to the pinned
+#     IP, so a git that honours the setting was reported as ignoring
+#     it.
+#
+#   * Under WSL the trace does not reach the shell at all: the Windows
+#     git writes it where the WSL pipe cannot see it, so the detection
+#     had nothing to read and fell back to plain git.
+#
+# So: ask the operating system instead.  Does a TLS connection to the
+# pinned IP succeed?  If it does, the address is reachable and pinning
+# it is worth trying; if it does not, skip that candidate.
 curlopt_resolve_works() {
-  local ip="$1" trace
-  trace="$(
-    GIT_TRACE_CURL=1 \
-    timeout "$TIMEOUT" \
-    git -C "$ROOT" -c "http.curloptResolve=${HOST}:443:${ip}" \
-      ls-remote origin 2>&1 |
-      grep -m1 -o "Trying [^:]*:" || true
-  )"
-  case "$trace" in
-    *"Trying ${ip}:"*)
+  local ip="$1"
+  if command -v curl >/dev/null 2>&1; then
+    if curl -sS -I --max-time 10 -o /dev/null \
+         "https://${ip}" -H "Host: ${HOST}" -k >/dev/null 2>&1; then
       return 0
-      ;;
-    *)
-      if [ -n "$trace" ]; then
-        log "this git build ignores http.curloptResolve (dialled ${trace#Trying }:)"
-      fi
-      return 1
-      ;;
-  esac
+    fi
+    return 1
+  fi
+  # No curl: fall back to trying the command itself.
+  GIT_TERMINAL_PROMPT=0 \
+  timeout "$TIMEOUT" \
+  "$GIT" -C "$GIT_ROOT" -c "http.curloptResolve=${HOST}:443:${ip}" \
+    ls-remote origin >/dev/null 2>&1
 }
 
 # Run a git subcommand, pinning the hostname to each candidate in turn.
@@ -101,7 +178,7 @@ run_git_pinned() {
     log "trying ${ip}"
     GIT_TERMINAL_PROMPT=0 \
     timeout "$TIMEOUT" \
-    git -C "$ROOT" \
+    "$GIT" -C "$GIT_ROOT" \
       -c "http.curloptResolve=${HOST}:443:${ip}" \
       -c "http.lowSpeedLimit=1" \
       -c "http.lowSpeedTime=30" \
@@ -118,7 +195,7 @@ run_git_pinned() {
 
 run_git() {
   if [ "${CCAP_GIT_DIRECT:-0}" = "1" ]; then
-    GIT_TERMINAL_PROMPT=0 git -C "$ROOT" "$@"
+    GIT_TERMINAL_PROMPT=0 "$GIT" -C "$GIT_ROOT" "$@"
     return $?
   fi
 
@@ -130,7 +207,7 @@ run_git() {
     log "pinning ${HOST} to ${ip}"
     GIT_TERMINAL_PROMPT=0 \
     timeout "$TIMEOUT" \
-    git -C "$ROOT" \
+    "$GIT" -C "$GIT_ROOT" \
       -c "http.curloptResolve=${HOST}:443:${ip}" \
       -c "http.lowSpeedLimit=1" \
       -c "http.lowSpeedTime=30" \
@@ -144,7 +221,7 @@ run_git() {
   done
 
   log "no pinned candidate worked; falling back to plain git"
-  GIT_TERMINAL_PROMPT=0 timeout "$TIMEOUT" git -C "$ROOT" "$@"
+  GIT_TERMINAL_PROMPT=0 timeout "$TIMEOUT" "$GIT" -C "$GIT_ROOT" "$@"
 }
 
 case "${1:-}" in
@@ -174,9 +251,9 @@ case "${1:-}" in
       log "pinning ${HOST} to ${ip}"
       GIT_TERMINAL_PROMPT=0 \
       timeout "$TIMEOUT" \
-      git -c "http.curloptResolve=${HOST}:443:${ip}" clone "$url" "$dir"
+      "$GIT" -C "http.curloptResolve=${HOST}:443:${ip}" clone "$url" "$dir"
     else
-      git clone "$url" "$dir"
+      "$GIT" clone "$url" "$dir"
     fi
     ;;
   *)
