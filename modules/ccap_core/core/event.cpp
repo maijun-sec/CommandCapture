@@ -16,6 +16,8 @@
 #include <sstream>
 #include <string>
 
+#include "core/json.h"
+
 namespace ccap {
 
 namespace {
@@ -116,6 +118,49 @@ std::vector<CommandEvent> EventCollector::deduped() const {
         }
     }
     return out;
+}
+
+std::string eventToJson(const CommandEvent& e) {
+    std::string j = "{";
+    j += jsonKvNum("seq", static_cast<int64_t>(e.seq));
+    j += ",";
+    j += jsonKvNum("timestamp_ms", e.timestampMs);
+    j += ",";
+    j += jsonKvStr("platform", platformName(e.platform));
+    j += ",";
+    j += jsonKvStr("source", sourceName(e.source));
+    j += ",";
+    j += jsonKvNum("pid", e.pid);
+    j += ",";
+    j += jsonKvNum("ppid", e.ppid);
+    j += ",";
+    j += jsonKvNum("depth", e.depth);
+    j += ",";
+    j += jsonKvStr("kind", e.kind);
+    j += ",";
+    j += jsonKvStr("executable", e.executable);
+    j += ",";
+    j += jsonKv("argv", jsonStringArray(e.argv));
+    j += ",";
+    j += jsonKvStr("command_line", e.rawCommandLine);
+    j += ",";
+    j += jsonKvStr("cwd", e.cwd);
+    j += ",";
+    j += jsonKvBool("is_builtin", e.isBuiltin);
+    j += ",";
+    j += jsonKvBool("resolved", e.resolved);
+    j += ",";
+    j += jsonKvBool("truncated", e.truncated);
+    j += ",";
+    j += jsonKvStr("script_path", e.scriptPath);
+    j += ",";
+    j += jsonKvNum("script_line", e.scriptLine);
+    j += ",";
+    j += jsonKvNum("exec_index", e.execIndex);
+    j += ",";
+    j += jsonKv("notes", jsonStringArray(e.notes));
+    j += "}";
+    return j;
 }
 
 }  // namespace ccap

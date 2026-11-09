@@ -125,4 +125,12 @@ int64_t nowUnixMs();
 std::string platformName(Platform p);
 std::string sourceName(EventSource s);
 
+// Serialize one event as a JSON object (without the trailing newline).
+//
+// It lives here rather than in the app layer because **two** places
+// need it: the "run" command and the unified "build" entry. When the
+// serialiser lived in one of them, the other would have to have its own
+// copy -- and two copies of a format definition drift apart.
+std::string eventToJson(const CommandEvent& e);
+
 }  // namespace ccap

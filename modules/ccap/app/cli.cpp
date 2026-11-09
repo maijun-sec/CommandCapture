@@ -39,6 +39,9 @@ void printUsage() {
         "Usage:\n"
         "  ccap run <script|exe> [args...]   run the target and capture the\n"
         "                                    whole process tree\n"
+        "  ccap build <cmd> [args...]        run the build and produce a compile\n"
+        "                                    database from EVERY language it\n"
+        "                                    uses (C/C++, JVM, .NET)\n"
         "  ccap scan <script>                static analysis only (builtin\n"
         "                                    commands)\n"
         "  ccap compdb <subcommand>          compile command tool (recognise /\n"
@@ -77,6 +80,22 @@ void printUsage() {
         "                                 (default: a temporary directory)\n"
         "  --verbose                      extra diagnostics on stderr\n"
         "\n"
+        "build options (ccap build):\n"
+        "  --build-output <file>         where the compile database is written\n"
+        "  --build-format <clang|clang-cmd|translated>\n"
+        "                                output format (default clang)\n"
+        "  --build-events                also write the capture events to stderr\n"
+        "  --msbuild-log <file>          read the .NET compile commands from\n"
+        "                                this MSBuild diagnostic log instead\n"
+        "                                of producing one\n"
+        "  --msbuild-args <switches>     the MSBuild switches to hand to a\n"
+        "                                script build, e.g. \"-v:diag\n"
+        "                                -flp:logfile=build.log;verbosity=diag\".\n"
+        "                                MSBuild's verbosity is a command line\n"
+        "                                switch only, so a script has to pass it\n"
+        "                                on: ccap will not guess\n"
+        "  --no-dotnet                   do not run the .NET backend\n"
+        "\n"
         "compdb options:\n"
         "  --config <file>              config file (JSON)\n"
         "  --output <file>              output file (default compile_commands.json)\n"
@@ -88,6 +107,30 @@ void printUsage() {
         "                                               line, translated from the\n"
         "                                               original compiler\n"
         "                                   translated  analyzer-style arguments\n"
+        "  --level <ast|bc>              the retention level of the generated\n"
+        "                                 clang commands:\n"
+        "                                   ast  the arguments needed for a\n"
+        "                                         correct clang AST\n"
+        "                                   bc   the arguments needed for a\n"
+        "                                         correct LLVM bitcode file\n"
+        "  --explain                    print the mapping report: what was\n"
+        "                                 kept, what was dropped and why\n"
+        "  --map-compiler <c=profile>   map a compiler to a profile\n"
+        "                                 (the name may end with '*')\n"
+        "  --default-profile <profile>   the profile for a compiler that is\n"
+        "                                 not recognised\n"
+        "  --compiler-match <p=target>  add an executable-name match pattern:\n"
+        "                                 a glob ('*-gcc') or a redirect\n"
+        "                                 ('replace/my-cc/g++')\n"
+        "  --compiler-version <ver>     the compiler version, for the rules\n"
+        "                                 that are scoped to a version range\n"
+        "  --unknown-policy <policy>    what to do with an option the switch\n"
+        "                                 table does not know:\n"
+        "                                   report  drop it, but record it\n"
+        "                                           (the default)\n"
+        "                                   keep    pass it through unchanged\n"
+        "                                   drop    drop it silently\n"
+        "                                   fail    fail the mapping\n"
         "  --keep-scripts               keep script commands (filtered by default)\n"
         "  --all                        show every command (no filtering)\n"
         "\n"
@@ -103,6 +146,8 @@ void printUsage() {
         "  ccap compdb export <file...>       generate compile_commands.json\n"
         "  ccap compdb translate <file...>    generate analyzer-style translated\n"
         "                                      commands\n"
+        "  ccap compdb map <file...>          generate clang commands through the\n"
+        "                                      switch table, at a given level\n"
         "\n"
         "Examples:\n"
         "  ccap run build.bat\n"
@@ -111,7 +156,8 @@ void printUsage() {
         "  ccap run build.bat --tree\n"
         "  ccap compdb list\n"
         "  ccap compdb capture -- make -j8\n"
-        "  ccap compdb export build-int/build-log.txt --out compile_commands.json\n");
+        "  ccap compdb export build-int/build-log.txt --out compile_commands.json\n"
+        "  ccap compdb map build-int/build-log.txt --level bc --explain\n");
 }
 
 bool parse(int argc, char** argv, Options* out, std::string* err) {
@@ -145,6 +191,8 @@ bool parse(int argc, char** argv, Options* out, std::string* err) {
                 out->compdbCommand = CompdbCommand::Export;
             } else if (std::strcmp(sub, "translate") == 0) {
                 out->compdbCommand = CompdbCommand::Translate;
+            } else if (std::strcmp(sub, "map") == 0) {
+                out->compdbCommand = CompdbCommand::Map;
             } else if (std::strcmp(sub, "help") == 0) {
                 out->compdbCommand = CompdbCommand::Help;
             } else {
@@ -155,6 +203,14 @@ bool parse(int argc, char** argv, Options* out, std::string* err) {
         } else {
             out->compdbCommand = CompdbCommand::Help;
         }
+    } else if (i < argc && std::strcmp(argv[i], "build") == 0) {
+        // The unified capture entry.
+        //
+        // "ccap build <cmd> [args...]" -- the build command and its
+        // arguments follow, and ccap works out which capture backend
+        // each part of the build needs.
+        out->command = Command::Build;
+        ++i;
     } else {
         out->command = Command::Run;
     }
@@ -208,7 +264,6 @@ bool parse(int argc, char** argv, Options* out, std::string* err) {
             }
             continue;
         }
-
         if (a == "--help" || a == "-h") {
             out->command = Command::Help;
             return true;
@@ -268,10 +323,46 @@ bool parse(int argc, char** argv, Options* out, std::string* err) {
         } else if (a == "--output-format") {
             if (!needValue(argc, argv, &i, "--output-format", err)) return false;
             out->compdbFormat = argv[i];
+        } else if (a == "--level") {
+            if (!needValue(argc, argv, &i, "--level", err)) return false;
+            out->compdbLevel = argv[i];
+        } else if (a == "--explain") {
+            out->compdbExplain = true;
+        } else if (a == "--map-compiler") {
+            if (!needValue(argc, argv, &i, "--map-compiler", err)) return false;
+            out->compdbMapCompiler.push_back(argv[i]);
+        } else if (a == "--default-profile") {
+            if (!needValue(argc, argv, &i, "--default-profile", err)) return false;
+            out->compdbDefaultProfile = argv[i];
+        } else if (a == "--compiler-version") {
+            if (!needValue(argc, argv, &i, "--compiler-version", err)) return false;
+            out->compdbCompilerVersion = argv[i];
+        } else if (a == "--unknown-policy") {
+            if (!needValue(argc, argv, &i, "--unknown-policy", err)) return false;
+            out->compdbUnknownPolicy = argv[i];
+        } else if (a == "--compiler-match") {
+            if (!needValue(argc, argv, &i, "--compiler-match", err)) return false;
+            out->compdbCompilerMatch.push_back(argv[i]);
         } else if (a == "--keep-scripts") {
             out->compdbIncludeScripts = true;
         } else if (a == "--all") {
             out->compdbShowAll = true;
+        } else if (a == "--build-output") {
+            if (!needValue(argc, argv, &i, "--build-output", err)) return false;
+            out->buildOutput = argv[i];
+        } else if (a == "--build-format") {
+            if (!needValue(argc, argv, &i, "--build-format", err)) return false;
+            out->buildFormat = argv[i];
+        } else if (a == "--build-events") {
+            out->buildEvents = true;
+        } else if (a == "--msbuild-log") {
+            if (!needValue(argc, argv, &i, "--msbuild-log", err)) return false;
+            out->buildMsbuildLog = argv[i];
+        } else if (a == "--msbuild-args") {
+            if (!needValue(argc, argv, &i, "--msbuild-args", err)) return false;
+            out->buildMsbuildArgs = argv[i];
+        } else if (a == "--no-dotnet") {
+            out->buildNoDotnet = true;
         } else if (!a.empty() && a[0] == '-' && a != "-") {
             // An option ccap does not know
             if (targetSeen && out->command != Command::Compdb) {

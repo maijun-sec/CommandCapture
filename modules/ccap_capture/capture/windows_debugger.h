@@ -76,6 +76,20 @@ struct CaptureOptions {
     // after the fact -- see core/agent_inject.h.
     std::string agentJar;
     std::string agentCaptureDir;
+
+    // Redirect the target's stdout to this file.
+    //
+    // It is exclusive with redirectOutputToStderr.
+    std::string stdoutFile;
+
+    // The MSBuild diagnostic log the build should produce.
+    //
+    // MSBuild reads the log file path from the MSBUILDLOGTEXT
+    // environment variable, so setting that variable makes the build
+    // write the log by itself -- without the build command being
+    // touched. The environment is inherited, so it reaches every
+    // MSBuild in the tree.
+    std::string msbuildLogFile;
 };
 
 // Run the target on Windows as a debugger and collect the command creation

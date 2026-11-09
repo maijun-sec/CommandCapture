@@ -51,49 +51,6 @@ struct SessionImpl {
 //   while the C ABI JSON format is a contract once published.
 //   Two independently stable implementations are safer than one shared
 //   function.
-std::string eventToJson(const ccap::CommandEvent& e) {
-    std::string j = "{";
-    j += ccap::jsonKvNum("seq", static_cast<int64_t>(e.seq));
-    j += ",";
-    j += ccap::jsonKvNum("timestamp_ms", e.timestampMs);
-    j += ",";
-    j += ccap::jsonKvStr("platform", ccap::platformName(e.platform));
-    j += ",";
-    j += ccap::jsonKvStr("source", ccap::sourceName(e.source));
-    j += ",";
-    j += ccap::jsonKvNum("pid", e.pid);
-    j += ",";
-    j += ccap::jsonKvNum("ppid", e.ppid);
-    j += ",";
-    j += ccap::jsonKvNum("depth", e.depth);
-    j += ",";
-    j += ccap::jsonKvStr("kind", e.kind);
-    j += ",";
-    j += ccap::jsonKvStr("executable", e.executable);
-    j += ",";
-    j += ccap::jsonKv("argv", ccap::jsonStringArray(e.argv));
-    j += ",";
-    j += ccap::jsonKvStr("command_line", e.rawCommandLine);
-    j += ",";
-    j += ccap::jsonKvStr("cwd", e.cwd);
-    j += ",";
-    j += ccap::jsonKvBool("is_builtin", e.isBuiltin);
-    j += ",";
-    j += ccap::jsonKvBool("resolved", e.resolved);
-    j += ",";
-    j += ccap::jsonKvBool("truncated", e.truncated);
-    j += ",";
-    j += ccap::jsonKvStr("script_path", e.scriptPath);
-    j += ",";
-    j += ccap::jsonKvNum("script_line", e.scriptLine);
-    j += ",";
-    j += ccap::jsonKvNum("exec_index", e.execIndex);
-    j += ",";
-    j += ccap::jsonKv("notes", ccap::jsonStringArray(e.notes));
-    j += "}";
-    return j;
-}
-
 }  // namespace
 
 extern "C" {

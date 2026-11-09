@@ -1,0 +1,5 @@
+packagefile fmt=/usr/local/go/pkg/linux_amd64/fmt.a
+packagefile os=/usr/local/go/pkg/linux_amd64/os.a
+packagefile runtime=/usr/local/go/pkg/linux_amd64/runtime.a
+packagefile github.com/example/project/internal/store=/tmp/go-build314159/b001/_pkg_.a
+packageshlib example=/usr/local/go/pkg/linux_amd64/libexample.so

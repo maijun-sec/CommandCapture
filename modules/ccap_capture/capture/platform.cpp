@@ -211,6 +211,8 @@ RunResult runCapture(const RunOptions& opts, EventCollector* collector) {
     co.redirectOutputToStderr = opts.redirectOutputToStderr;
     co.agentJar = opts.agentJar;
     co.agentCaptureDir = opts.agentCaptureDir;
+    co.msbuildLogFile = opts.msbuildLogFile;
+    co.stdoutFile = opts.stdoutFile;
 
     CaptureResult cr = runWindowsDebugger(co, collector);
     result.exitCode = cr.exitCode;

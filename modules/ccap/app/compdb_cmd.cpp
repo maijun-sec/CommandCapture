@@ -192,6 +192,101 @@ AdapterContext buildContext(const CompdbConfig& config,
     return ctx;
 }
 
+// Build the switch-table mapper.
+//
+// The configuration supplies the profiles and the explicit
+// unknown-compiler mapping; the command line can add more mappings on
+// top (--map-compiler / --default-profile).
+//
+// The command line wins over the configuration: it is the more
+// specific, more recent instruction.
+OptionMapper buildMapperFor(const CompdbConfig& config,
+                             const cli::Options& opts) {
+    OptionMapper mapper = buildMapper(config);
+
+    for (const auto& spec : opts.compdbMapCompiler) {
+        // The form is "<compiler>=<profile>"
+        size_t eq = spec.find('=');
+        if (eq == std::string::npos || eq == 0 || eq + 1 >= spec.size()) {
+            std::fprintf(stderr,
+                         "error: --map-compiler needs <compiler>=<profile>, "
+                         "got: %s\n",
+                         spec.c_str());
+            continue;
+        }
+        mapper.setCompilerProfile(spec.substr(0, eq), spec.substr(eq + 1));
+    }
+
+    if (!opts.compdbDefaultProfile.empty()) {
+        mapper.setDefaultProfile(opts.compdbDefaultProfile);
+    }
+
+    // ── The executable-name match patterns ───────────────────────────
+    //
+    // The form is "<pattern>=<target>", where the pattern is a glob
+    // ("*-gcc") or a redirect ("replace/my-cc/g++").
+    for (const auto& spec : opts.compdbCompilerMatch) {
+        size_t eq = spec.find('=');
+        if (eq == std::string::npos || eq == 0 || eq + 1 >= spec.size()) {
+            std::fprintf(stderr,
+                         "error: --compiler-match needs <pattern>=<target>, "
+                         "got: %s\n",
+                         spec.c_str());
+            continue;
+        }
+        CompilerMatch match;
+        match.pattern = spec.substr(0, eq);
+        match.variantId = spec.substr(eq + 1);
+        match.isRedirect = match.pattern.compare(0, 8, "replace/") == 0;
+        mapper.registry().addMatch(match);
+    }
+
+    // ── The compiler version ─────────────────────────────────────────
+    //
+    // The version-scoped rules do not fire when the version is
+    // unknown: a rule whose precondition could not be verified must
+    // not be applied.
+    if (!opts.compdbCompilerVersion.empty()) {
+        mapper.setCompilerVersion(opts.compdbCompilerVersion);
+    }
+
+    // ── The unknown-option policy ────────────────────────────────────
+    if (!opts.compdbUnknownPolicy.empty()) {
+        UnknownPolicy policy = UnknownPolicy::Report;
+        if (!unknownPolicyFromName(opts.compdbUnknownPolicy, &policy)) {
+            std::fprintf(stderr,
+                         "error: unknown --unknown-policy: %s\n"
+                         "  (the policies are: report, keep, drop, fail)\n",
+                         opts.compdbUnknownPolicy.c_str());
+        } else {
+            mapper.setUnknownPolicy(policy);
+        }
+    }
+
+    return mapper;
+}
+
+// Resolve the retention level.
+TranslateLevel resolveLevel(const CompdbConfig& config,
+                             const cli::Options& opts,
+                             bool* ok) {
+    *ok = true;
+
+    std::string name = opts.compdbLevel;
+    if (name.empty()) name = config.outputLevel;
+    if (name.empty()) name = "ast";
+
+    TranslateLevel level = TranslateLevel::Ast;
+    if (!translateLevelFromName(name, &level)) {
+        std::fprintf(stderr,
+                     "error: unknown retention level: %s "
+                     "(expected 'ast' or 'bc')\n",
+                     name.c_str());
+        *ok = false;
+    }
+    return level;
+}
+
 }  // namespace
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -634,6 +729,83 @@ int cmdTranslate(const cli::Options& opts) {
     std::string content = exportTranslatedCommands(kept, registry, ctx);
 
     std::fwrite(content.data(), 1, content.size(), stdout);
+    return 0;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// map -- the table-driven clang command generation
+//
+// The difference to translate: this one goes through the **switch
+// table** and applies the **retention level**.
+//
+//   ccap compdb map build-log.txt --level ast
+//   ccap compdb map build-log.txt --level bc --explain
+//
+// The level decides what is kept:
+//   ast -- the arguments needed for a correct clang AST
+//   bc  -- the arguments needed for a correct LLVM bitcode file
+//
+// --explain prints the report: what was kept, what was dropped and why.
+// ═══════════════════════════════════════════════════════════════════════════
+
+int cmdMap(const cli::Options& opts) {
+    CompdbConfig config;
+    std::string err;
+    if (!opts.compdbConfig.empty()) {
+        if (!CompdbConfig::loadFile(opts.compdbConfig, &config, &err)) {
+            std::fprintf(stderr, "error: %s\n", err.c_str());
+            return 2;
+        }
+    }
+
+    bool levelOk = false;
+    TranslateLevel level = resolveLevel(config, opts, &levelOk);
+    if (!levelOk) return 2;
+
+    CommandParser parser;
+    parser.setCompilerTable(buildCompilerTable(config));
+
+    std::vector<CompileCommand> all;
+    for (const auto& in : opts.compdbInputs) {
+        auto cmds = parseFileAuto(parser, in, &err);
+        if (!err.empty()) {
+            std::fprintf(stderr, "error: %s\n", err.c_str());
+            return 2;
+        }
+        all.insert(all.end(), cmds.begin(), cmds.end());
+    }
+
+    FilterRules rules(mergeFilter(config, opts, opts.compdbIncludeScripts));
+    std::vector<CompileCommand> kept;
+    for (const auto& c : all) {
+        if (rules.keep(c)) kept.push_back(c);
+    }
+
+    OptionMapper mapper = buildMapperFor(config, opts);
+
+    // ── The report (to stderr, so stdout stays pipeable) ────────────
+    if (opts.compdbExplain) {
+        std::string report = exportMappingReports(kept, mapper, level);
+        std::fwrite(report.data(), 1, report.size(), stderr);
+    }
+
+    // ── The commands ─────────────────────────────────────────────────
+    std::string content = exportClangCommandLinesText(kept, mapper, level);
+
+    if (!opts.compdbOutput.empty()) {
+        if (!writeFile(opts.compdbOutput, content)) {
+            std::fprintf(stderr, "error: cannot write %s\n",
+                         opts.compdbOutput.c_str());
+            return 3;
+        }
+        if (opts.verbose) {
+            std::fprintf(stderr, "[ccap] wrote %zu compile command(s) to %s\n",
+                         kept.size(), opts.compdbOutput.c_str());
+        }
+    } else {
+        std::fwrite(content.data(), 1, content.size(), stdout);
+    }
+
     return 0;
 }
 

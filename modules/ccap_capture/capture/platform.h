@@ -42,6 +42,28 @@ struct RunOptions {
     // consumed directly from a pipe.
     bool redirectOutputToStderr = false;
 
+    // Redirect the target's stdout to this **file**.
+    //
+    // WHY A FILE AND NOT A PIPE
+    //
+    // The MSBuild diagnostic log is written to stdout, and it is
+    // **UTF-16LE** -- so the bytes have to reach a file untouched. A
+    // pipe would work too, but the reader on the other end has to
+    // drain it while the build runs, and a build that writes 10 MB of
+    // diagnostic output would block until the reader catches up.
+    //
+    // WHY NOT MERGE WITH STDERR
+    //
+    // Because the merge corrupts the log. The two streams have
+    // different encodings -- MSBuild writes UTF-16, the console
+    // messages are in the console code page -- and interleaving them
+    // produces a file that decodes to garbage. Measured: the Csc task
+    // line was unreadable after a 2>&1 redirect, while the same build
+    // with a pure stdout redirect produced a log that parsed cleanly.
+    //
+    // When it is empty, the stdout is not redirected.
+    std::string stdoutFile;
+
     // The JVM capture agent to attach to the target, and the directory its
     // captures go into.
     //
@@ -87,6 +109,27 @@ struct RunOptions {
 
     // The directory the agent writes its captures into.
     std::string agentCaptureDir;
+
+    // The MSBuild diagnostic log to produce, and where to put it.
+    //
+    // MSBuild reads the log file path from the MSBUILDLOGTEXT
+    // environment variable, so setting that variable in the environment
+    // of the root process makes the build write the log by itself --
+    // without the build command being touched.
+    //
+    // WHY THE ENVIRONMENT AND NOT A COMMAND LINE FLAG
+    //
+    //   The build command belongs to the user. Adding "-v:diag" to it
+    //   means guessing where the flag goes, and it breaks entirely when
+    //   the build is not MSBuild at all -- a wrapper script, an IDE
+    //   build, a solution that is built by a different tool.
+    //
+    //   The environment variable is invisible to the build, so it
+    //   cannot be misplaced, and it is inherited by every process in
+    //   the tree -- so MSBuild finds it wherever it runs.
+    //
+    // When it is empty, no log is produced.
+    std::string msbuildLogFile;
 };
 
 // Capture result

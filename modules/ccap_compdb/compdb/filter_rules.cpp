@@ -133,15 +133,41 @@ bool FilterRules::keep(const CompileCommand& cmd) const {
     }
 
     // 2) Explicitly excluded
-    for (const auto& ex : config_.excludeNames) {
-        if (lower(stripExe(cmd.compilerBase)) == lower(stripExe(ex))) {
-            return false;
+    //
+    // The Go toolchain is the exception, and it is an exception
+    // because of what the exclusion list is for.
+    //
+    // "link" is in the default list because it is usually the C/C++
+    // linker, and a linker does not compile anything. The Go
+    // toolchain's "link" is a different thing: it is the step that
+    // says **which packages are in the binary**, through its
+    // "-importcfg". A consumer that only has the compile steps knows
+    // what each package imports; only the link step says what the
+    // binary contains.
+    //
+    // So dropping the Go link command would throw away the
+    // authoritative answer. The Go tools are recognized by their path
+    // (see CompilerRule::pathShapes), so a command that is known to
+    // be a Go tool is not the C/C++ linker, whatever it is called.
+    //
+    // The cost of this: the exclusion list works on **names**, and the
+    // name of the Go link step is "link", so an exclusion of that name
+    // does not reach it either. That is the safe direction -- the
+    // alternative is throwing away the authoritative package list --
+    // and the Go link step can still be left out of an analysis by
+    // other means.
+    const bool isGoTool = (cmd.kind == CompilerKind::Go);
+    if (!isGoTool) {
+        for (const auto& ex : config_.excludeNames) {
+            if (lower(stripExe(cmd.compilerBase)) == lower(stripExe(ex))) {
+                return false;
+            }
         }
-    }
-    for (const auto& p : config_.excludePrefixes) {
-        if (cmd.compilerBase.size() >= p.size() &&
-            lower(cmd.compilerBase).compare(0, p.size(), lower(p)) == 0) {
-            return false;
+        for (const auto& p : config_.excludePrefixes) {
+            if (cmd.compilerBase.size() >= p.size() &&
+                lower(cmd.compilerBase).compare(0, p.size(), lower(p)) == 0) {
+                return false;
+            }
         }
     }
 
@@ -184,20 +210,39 @@ std::string FilterRules::explain(const CompileCommand& cmd) const {
         return "dropped: not in whitelist";
     }
 
-    for (const auto& ex : config_.excludeNames) {
-        if (lower(stripExe(cmd.compilerBase)) == lower(stripExe(ex))) {
-            return "dropped: excluded (" + ex + ")";
+    // The Go toolchain, as in keep() above: the name-based exclusion
+    // does not apply to it.
+    //
+    // The reason is stated rather than implied, because "the link step
+    // was kept" is a decision somebody may want to question.
+    const bool isGoTool = (cmd.kind == CompilerKind::Go);
+    if (!isGoTool) {
+        for (const auto& ex : config_.excludeNames) {
+            if (lower(stripExe(cmd.compilerBase)) == lower(stripExe(ex))) {
+                return "dropped: excluded (" + ex + ")";
+            }
         }
-    }
-    for (const auto& p : config_.excludePrefixes) {
-        if (cmd.compilerBase.size() >= p.size() &&
-            lower(cmd.compilerBase).compare(0, p.size(), lower(p)) == 0) {
-            return "dropped: excluded prefix (" + p + ")";
+        for (const auto& p : config_.excludePrefixes) {
+            if (cmd.compilerBase.size() >= p.size() &&
+                lower(cmd.compilerBase).compare(0, p.size(), lower(p)) == 0) {
+                return "dropped: excluded prefix (" + p + ")";
+            }
         }
     }
 
     if (!config_.keepScripts && isScriptName(cmd.compilerBase)) {
         return "dropped: script (no compilation happens)";
+    }
+    // The Go toolchain gets its own reason, because the two steps are
+    // kept for different reasons and the difference matters: the
+    // compile step compiles a package, the link step is what says
+    // which packages the binary contains.
+    if (cmd.kind == CompilerKind::Go) {
+        if (cmd.compilerBase == "link") {
+            return "kept: the Go link step -- its -importcfg is the "
+                   "authoritative list of the packages in the binary";
+        }
+        return "kept: the Go compile step (compiler kind = go)";
     }
     if (cmd.kind != CompilerKind::Unknown &&
         cmd.kind != CompilerKind::Generic) {

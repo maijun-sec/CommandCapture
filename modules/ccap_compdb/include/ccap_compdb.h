@@ -31,43 +31,18 @@
 #include <string>
 #include <vector>
 
+#include "ccap_compdb_map.h"
+
 namespace ccap {
 namespace compdb {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Compiler kinds
 // ═══════════════════════════════════════════════════════════════════════════
-
-// The "kind" of a compiler
 //
-// Each kind corresponds to one adapter implementation.
-// Adding a new compiler = adding one adapter file + one enum value here,
-// **without touching any other file**.
-enum class CompilerKind {
-    Unknown = 0,
-    Gcc,        // gcc / g++ / cc / c++ / <target>-gcc ...
-    Clang,      // clang / clang++ / clang-<ver>
-    Msvc,       // MSVC cl.exe
-    Iar,        // IAR EW
-    Generic,    // fallback: generic extraction of -I/-D only
-
-    // ── The JVM languages ─────────────────────────────────────────────
-    //
-    // These are the compilers the JVM capture agent hooks. They are
-    // **not** native compilers: they produce class files, not object
-    // files, and their options are their own.
-    //
-    // They are separate kinds rather than one "jvm" kind because each
-    // compiler has its own option syntax, and a consumer that knows the
-    // difference between a Kotlin compile and a Scala compile can do
-    // more with the capture. The adapter for each kind is isolated, just
-    // like the native ones.
-    Javac,      // javac (and sjavac, which drives javac)
-    Ecj,        // Eclipse's compiler
-    Kotlin,     // kotlinc / K2
-    Scala3,     // Scala 3 (dotc)
-    Scala2,     // Scala 2 (nsc)
-};
+// The CompilerKind enum lives in ccap_compdb_map.h (which is included
+// above), because the compiler profile -- the switch table -- has to
+// refer to it, and that header is included first.
 
 const char* compilerKindName(CompilerKind kind);
 bool compilerKindFromName(const std::string& name, CompilerKind* out);
@@ -87,16 +62,65 @@ bool compilerKindFromName(const std::string& name, CompilerKind* out);
 //   not be conflated.
 //   Prefix rules group a whole toolchain family together, while each
 //   concrete path is still configured independently.
+//
+// ── The path-shape rules ───────────────────────────────────────────────
+//
+// The three rules above all match on the **base name**. That is enough
+// for a compiler whose name identifies it ("gcc", "cl", "javac"), but it
+// is not enough for Go's toolchain:
+//
+//     <GOROOT>/pkg/tool/<goos>_<goarch>/compile
+//     <GOROOT>/pkg/tool/<goos>_<goarch>/link
+//
+// WHY THE NAME IS NOT ENOUGH
+//
+//   "compile" and "link" are ordinary program names. There are build
+//   tools called "compile" and "link" that have nothing to do with Go,
+//   and a name-only rule would hand them to the Go parser -- where the
+//   option syntax means something completely different. That is not a
+//   cosmetic mistake: the command would be read as a Go compile, its
+//   arguments would be interpreted as Go options, and the result would
+//   be a wrong record of the build.
+//
+//   The Go tool binaries, on the other hand, are always in one place:
+//   the "pkg/tool/<goos>_<goarch>" directory of the toolchain. That
+//   directory shape IS the identity, so it is what the rule matches.
+//
+// A path shape is a slash-separated pattern:
+//
+//     pkg/tool/?*_*?/compile
+//
+//   * the last segment is the executable name;
+//   * the segments before it are directory segments that must appear,
+//     **consecutively**, somewhere in the path;
+//   * inside a segment, '*' matches any run of characters and '?'
+//     matches exactly one -- a segment is the unit, so a pattern can
+//     never match across a directory boundary.
+//
+// The shape above says: the file is named "compile", and it sits in a
+// "pkg/tool" directory whose last subdirectory is named
+// "<something>_<something>".
 struct CompilerRule {
     CompilerKind kind = CompilerKind::Unknown;
     std::string id;                       // rule identifier (referenced by it in the config)
     std::vector<std::string> exactNames; // exact executable names
     std::vector<std::string> prefixRules;// prefixes (ending with '-' is clearer)
     std::vector<std::string> suffixRules;// suffixes
+
+    // The path-shape rules (see above). Empty for every rule that is
+    // identified by its name.
+    std::vector<std::string> pathShapes;
+
     bool enabled = true;
 
     // Can this rule match this executable name (without the path)?
     bool matchesBaseName(const std::string& base) const;
+
+    // Can this rule match this executable **path**?
+    //
+    // Only the path-shape rules can: the name rules cannot tell two
+    // executables with the same name apart.
+    bool matchesPath(const std::string& path) const;
 };
 
 // The full compiler table
@@ -119,7 +143,12 @@ public:
     // Match a kind by executable name (without the path)
     CompilerKind matchBaseName(const std::string& base) const;
 
-    // Match by full path (take the basename and match that)
+    // Match by full path.
+    //
+    // The path-shape rules are tried first, because they are the only
+    // ones that can tell two executables with the same name apart
+    // (see CompilerRule::pathShapes). When no path shape matches, the
+    // base name decides -- which is what this always did.
     CompilerKind matchPath(const std::string& path) const;
 
     // Match the rule itself (nullptr when there is none)
@@ -239,6 +268,40 @@ struct CompileCommand {
     std::vector<std::string> classpathDirs;
     std::vector<std::string> moduleDirs;
     std::vector<std::string> processorDirs;
+
+    // ── The Go language ────────────────────────────────────────────────
+    //
+    // A Go compile is not described by an include path and a set of
+    // macros. It is described by the **package** it belongs to and by
+    // the **export data** of the packages it depends on:
+    //
+    //   packageImportPath -- the "-p" value: the import path of the
+    //                       package being compiled ("github.com/x/y/pkg",
+    //                       or "command-line-arguments" for the package
+    //                       "go build" compiles from the command line)
+    //   importConfigPath  -- the "-importcfg" value: the manifest that
+    //                       lists the export data of every dependency
+    //   packageFiles      -- that manifest, read: import path -> the
+    //                       export data file of that package
+    //
+    // The language version ("-lang=go1.23") goes into languageStandard:
+    // it is the language standard of the package, in the same sense that
+    // "-std=c++17" is the language standard of a C++ translation unit.
+    //
+    // WHY THE MANIFEST PATH IS KEPT ALONGSIDE THE MAPPING
+    //
+    //   The manifest lives in the build's temporary directory, and the
+    //   build deletes that directory when it is done. So the mapping may
+    //   well be empty when a command line is parsed after the fact --
+    //   and the path is then the only thing that still lets a consumer
+    //   find the manifest while it exists.
+    //
+    //   That is also why the path survives the translation into the
+    //   analyzer's own vocabulary: it is the one piece of the command
+    //   that cannot be reconstructed from the rest.
+    std::string packageImportPath;
+    std::string importConfigPath;
+    std::map<std::string, std::string> packageFiles;
 
     // Force-included headers: -include <file> / /FI<file>.
     //
@@ -579,6 +642,20 @@ const CompilerAdapter* makeEcjAdapter();
 const CompilerAdapter* makeKotlinAdapter();
 const CompilerAdapter* makeScala3Adapter();
 const CompilerAdapter* makeScala2Adapter();
+
+// The .NET language adapters.
+//
+// One per compiler kind, for the same reason as the JVM ones: the
+// option syntax differs, and the adapters are isolated from each other.
+const CompilerAdapter* makeCsharpAdapter();
+
+// The Go adapter.
+//
+// The Go toolchain is one kind, not several: "compile" and "link"
+// take the same options, and the difference between them is which
+// step of the build they are -- a fact the model records, not a fact
+// about the option syntax.
+const CompilerAdapter* makeGoAdapter();
 }  // namespace adapters
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -607,9 +684,114 @@ struct CompdbConfig {
     // The system header paths per kind
     std::map<std::string, std::vector<std::string>> systemIncludes;
 
+    // ── The compiler profiles ─────────────────────────────────────────
+    //
+    // A profile is the **switch table** of one compiler family: how it
+    // spells its options, what they mean, and how they map to clang.
+    //
+    // The built-in profiles cover gcc, clang, msvc and the generic
+    // fallback. A user profile **adds** to those -- it does not
+    // replace them -- so configuring an unknown cross compiler never
+    // costs you the built-in gcc behaviour.
+    //
+    // See ccap_compdb_map.h for the design.
+    std::vector<CompilerProfile> profiles;
+
+    // The mapping of an **unknown** compiler to a profile.
+    //
+    // This is the "the user says: treat it as the gcc family" case.
+    //
+    // The key is the compiler's base name (or a prefix of it); the
+    // value is the id of the profile to use for it. The special value
+    // "generic" means "use the conservative generic table" -- the
+    // intersection of the common option spellings.
+    //
+    // The lookup is tried in this order:
+    //   1. an exact base-name match
+    //   2. a prefix match (longest prefix wins)
+    //   3. the default below
+    //
+    // The default is empty, which means "an unknown compiler falls back
+    // to the generic profile". Setting it to "gnu" makes every unknown
+    // compiler be treated as the gcc family.
+    std::map<std::string, std::string> compilerProfiles;
+
+    // The fallback profile for a compiler that is not in the table and
+    // has no explicit mapping.
+    //
+    // Empty means the generic profile.
+    std::string defaultProfile;
+
+    // ═══════════════════════════════════════════════════════════════════
+    // The compiler registry
+    // ═══════════════════════════════════════════════════════════════════
+    //
+    // The profiles above answer "how does this compiler spell its
+    // options". The registry answers the questions that a flat profile
+    // cannot:
+    //
+    //   - which **variants** belong to a family (gcc -> g++ -> g++cc),
+    //     and how an executable name selects one;
+    //   - which rules apply to a **subset** of the variants;
+    //   - how to detect the **version**, and which rules are scoped to
+    //     a version range.
+    //
+    // A user family with the same id as a built-in one **replaces** it:
+    // the intent of "override the gcc table" is "my gcc does not
+    // behave like the stock one", and a merge would leave the stock
+    // rules underneath -- which still win on the longer option names.
+    std::vector<CompilerFamily> families;
+
+    // The executable-name match patterns.
+    //
+    // Two forms:
+    //
+    //   "*-gcc"          a glob. '*' matches any run of characters and
+    //                    may appear anywhere; '?' matches one.
+    //   "replace/a/b"    a redirect: the executable called "a" is
+    //                    really the compiler "b".
+    //
+    // The patterns are tried after the explicit user mapping and
+    // before the default profile, and the **longest** glob wins.
+    std::vector<CompilerMatch> compilerMatches;
+
+    // The user's rule overrides.
+    //
+    // The scope is (profile, variant): an empty profile applies to
+    // every profile, an empty variant to every variant of it.
+    std::vector<ProfileOverride> profileOverrides;
+
+    // What to do with an option the switch table does not know.
+    //
+    // "report" (the default) drops it from the generated command but
+    // records it in the audit report. "keep" passes it through
+    // unchanged. "drop" drops it silently -- the one mode that can
+    // produce a wrong artifact without telling anybody. "fail" makes
+    // the mapping fail.
+    //
+    // Empty means "report".
+    std::string unknownPolicy;
+
+    // The compiler version, for the version-scoped rules.
+    //
+    // The tool never runs the compiler by itself (a build log from
+    // another machine has no toolchain here), so the version comes from
+    // the caller. Empty means "not known", and the version-scoped rules
+    // then do not fire -- a rule whose precondition could not be
+    // verified must not be applied.
+    std::string compilerVersion;
+
     // Output
     std::string outputPath = "compile_commands.json";
     std::string outputFormat = "clang";
+
+    // The retention level of the generated clang commands.
+    //
+    // "ast" -- the arguments needed for a correct clang AST.
+    // "bc"  -- the arguments needed for a correct LLVM bitcode file.
+    //
+    // Only used by the "clang-cmd" output format.
+    std::string outputLevel = "ast";
 
     // Parse the JSON configuration; on failure returns false and fills in err
     static bool load(const std::string& text, CompdbConfig* out, std::string* err);
@@ -653,6 +835,42 @@ std::string exportTranslatedCommands(const std::vector<CompileCommand>& commands
 // argv untouched -- that one is a faithful record of the build, this one is
 // a clang replay of it.
 std::string exportClangCommands(const std::vector<CompileCommand>& commands);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// The level-aware clang command export
+// ═══════════════════════════════════════════════════════════════════════════
+
+// The clang commands for a retention level.
+//
+// This is the table-driven version of exportClangCommands(): the
+// options are mapped through the switch table, and the level decides
+// which of them are kept.
+//
+// The difference between the two is not cosmetic:
+//   exportClangCommands()  -- a best-effort translation of what it
+//                             knows, with the losses reported
+//                             separately
+//   exportClangCommandLines() -- the full table-driven mapping, with
+//                             every decision explained
+//
+// The lines are returned separately (not as one blob) so the caller can
+// report on them individually.
+std::vector<std::string> exportClangCommandLines(
+    const std::vector<CompileCommand>& commands,
+    const OptionMapper& mapper,
+    TranslateLevel level,
+    std::vector<MappingReport>* reports = nullptr);
+
+// The same, as one text blob (one command per line).
+std::string exportClangCommandLinesText(
+    const std::vector<CompileCommand>& commands,
+    const OptionMapper& mapper,
+    TranslateLevel level);
+
+// The human-readable report: what was kept, what was dropped and why.
+std::string exportMappingReports(const std::vector<CompileCommand>& commands,
+                                  const OptionMapper& mapper,
+                                  TranslateLevel level);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // clang command translation

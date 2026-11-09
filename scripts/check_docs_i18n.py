@@ -34,6 +34,22 @@ PAIRS = [
         "docs/en/WINDOWS-CAPTURE-PRINCIPLE-2026-10-27.md",
     ),
     (
+        "docs/zh/COMPILER-SWITCH-TABLE-2026-11-03.md",
+        "docs/en/COMPILER-SWITCH-TABLE-2026-11-03.md",
+    ),
+    (
+        "docs/zh/COMPILER-CONFIG-GAP-ANALYSIS-2026-11-03.md",
+        "docs/en/COMPILER-CONFIG-GAP-ANALYSIS-2026-11-03.md",
+    ),
+    (
+        "docs/zh/UNIFIED-BUILD-ENTRY-2026-11-05.md",
+        "docs/en/UNIFIED-BUILD-ENTRY-2026-11-05.md",
+    ),
+    (
+        "docs/zh/OUTPUT-FORMATS-2026-11-05.md",
+        "docs/en/OUTPUT-FORMATS-2026-11-05.md",
+    ),
+    (
         "prototypes/windows-debugproc/README.md",
         "prototypes/windows-debugproc/README.en.md",
     ),

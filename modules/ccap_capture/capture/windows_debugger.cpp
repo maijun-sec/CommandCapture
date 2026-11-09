@@ -248,7 +248,33 @@ CaptureResult runWindowsDebugger(const CaptureOptions& opts,
     HANDLE hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
     HANDLE hStdErr = GetStdHandle(STD_ERROR_HANDLE);
     HANDLE hStdIn = GetStdHandle(STD_INPUT_HANDLE);
-    if (opts.redirectOutputToStderr) {
+
+    // The stdout redirect to a file.
+    //
+    // It takes precedence over the stderr redirect: the two are
+    // mutually exclusive destinations for the same handle.
+    HANDLE hStdOutFile = INVALID_HANDLE_VALUE;
+    if (!opts.stdoutFile.empty()) {
+        // FILE_FLAG_INHERIT is required: a handle is only inherited by
+        // the child when it is marked inheritable. Without it the
+        // child gets an invalid stdout and the build fails with a
+        // confusing error.
+        SECURITY_ATTRIBUTES sa;
+        sa.nLength = sizeof(sa);
+        sa.lpSecurityDescriptor = nullptr;
+        sa.bInheritHandle = TRUE;
+
+        hStdOutFile = ::CreateFileA(opts.stdoutFile.c_str(), GENERIC_WRITE,
+                                    FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
+                                    CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL,
+                                    nullptr);
+        if (hStdOutFile != INVALID_HANDLE_VALUE) {
+            si.dwFlags |= STARTF_USESTDHANDLES;
+            si.hStdOutput = hStdOutFile;
+            si.hStdError = hStdErr;
+            si.hStdInput = hStdIn;
+        }
+    } else if (opts.redirectOutputToStderr) {
         si.dwFlags |= STARTF_USESTDHANDLES;
         si.hStdOutput = hStdErr;
         si.hStdError = hStdErr;
@@ -258,7 +284,7 @@ CaptureResult runWindowsDebugger(const CaptureOptions& opts,
     PROCESS_INFORMATION pi{};
 
     DWORD flags = DEBUG_PROCESS | CREATE_UNICODE_ENVIRONMENT;
-    if (opts.redirectOutputToStderr) {
+    if (si.dwFlags & STARTF_USESTDHANDLES) {
         // If STARTF_USESTDHANDLES is passed, bInheritHandles must be TRUE,
         // otherwise the child process does not get these handles.
         flags |= CREATE_NO_WINDOW;
@@ -288,6 +314,15 @@ CaptureResult runWindowsDebugger(const CaptureOptions& opts,
     // The environment is inherited, so one injection here covers the whole
     // process tree: mvn -> java -> javac and gradle -> daemon -> javac
     // both carry it through. Measured.
+    // The environment variables that have to be added to the root
+    // process.
+    //
+    // They are collected first and then applied in one pass, because
+    // the environment block is a flat sequence of NUL-terminated
+    // "NAME=VALUE" strings and rewriting it once is simpler than
+    // rewriting it twice.
+    std::vector<std::pair<std::wstring, std::wstring>> envToSet;
+
     if (!opts.agentJar.empty()) {
         char existing[4096];
         existing[0] = '\0';
@@ -302,38 +337,55 @@ CaptureResult runWindowsDebugger(const CaptureOptions& opts,
                                                          opts.agentJar,
                                                          opts.agentCaptureDir);
         if (!options.empty()) {
-            // Rebuild the block with the variable replaced. The block is a
-            // sequence of "NAME=VALUE" strings, each terminated by a NUL,
-            // and the whole block by an extra NUL.
-            std::wstring updated;
-            bool replaced = false;
-            std::wstring nameW = utf8ToWide("JAVA_TOOL_OPTIONS=");
-            for (size_t i = 0; i < envBlock.size();) {
-                size_t end = envBlock.find(L'\0', i);
-                if (end == std::wstring::npos) {
-                    break;
-                }
-                std::wstring entry = envBlock.substr(i, end - i);
-                if (entry.compare(0, nameW.size(), nameW) == 0) {
-                    // Replace the existing value rather than adding a second
-                    // entry: Windows takes the first occurrence, and a
-                    // duplicate would silently win over the new one.
-                    updated += nameW + utf8ToWide(options);
-                    updated.push_back(L'\0');
-                    replaced = true;
-                } else {
-                    updated += entry;
-                    updated.push_back(L'\0');
-                }
-                i = end + 1;
+            envToSet.emplace_back(utf8ToWide("JAVA_TOOL_OPTIONS"),
+                                   utf8ToWide(options));
+        }
+    }
+
+    // The MSBuild diagnostic log.
+    //
+    // MSBuild reads the log file path from MSBUILDLOGTEXT, so setting
+    // it here makes the build write the log by itself. The environment
+    // is inherited, so it reaches every MSBuild in the tree.
+    if (!opts.msbuildLogFile.empty()) {
+        envToSet.emplace_back(utf8ToWide("MSBUILDLOGTEXT"),
+                               utf8ToWide(opts.msbuildLogFile));
+    }
+
+    for (const auto& entry : envToSet) {
+        const std::wstring& nameW = entry.first;
+        const std::wstring& valueW = entry.second;
+
+        // Rebuild the block with the variable replaced. The block is a
+        // sequence of "NAME=VALUE" strings, each terminated by a NUL,
+        // and the whole block by an extra NUL.
+        std::wstring updated;
+        bool replaced = false;
+        for (size_t i = 0; i < envBlock.size();) {
+            size_t end = envBlock.find(L'\0', i);
+            if (end == std::wstring::npos) {
+                break;
             }
-            if (!replaced) {
-                updated += nameW + utf8ToWide(options);
+            std::wstring e = envBlock.substr(i, end - i);
+            if (e.compare(0, nameW.size(), nameW) == 0) {
+                // Replace the existing value rather than adding a second
+                // entry: Windows takes the first occurrence, and a
+                // duplicate would silently win over the new one.
+                updated += nameW + valueW;
+                updated.push_back(L'\0');
+                replaced = true;
+            } else {
+                updated += e;
                 updated.push_back(L'\0');
             }
-            updated.push_back(L'\0');
-            envBlock = updated;
+            i = end + 1;
         }
+        if (!replaced) {
+            updated += nameW + valueW;
+            updated.push_back(L'\0');
+        }
+        updated.push_back(L'\0');
+        envBlock = updated;
     }
 
     std::wstring wExe = utf8ToWide(exePath);
@@ -344,11 +396,20 @@ CaptureResult runWindowsDebugger(const CaptureOptions& opts,
         wExe.c_str(),
         &wCmd[0],
         nullptr, nullptr,
-        opts.redirectOutputToStderr ? TRUE : FALSE,
+        // The child inherits the standard handles when they were set
+        // explicitly -- and a handle it inherits has to be inheritable,
+        // which CreateFileA does not make by default.
+        (si.dwFlags & STARTF_USESTDHANDLES) ? TRUE : FALSE,
         flags,
         envBlock.empty() ? nullptr : &envBlock[0],
         wCwd.empty() ? nullptr : wCwd.c_str(),
         &si, &pi);
+
+    // The stdout file is ours, not the child's: close our copy once
+    // the child has it.
+    if (hStdOutFile != INVALID_HANDLE_VALUE) {
+        ::CloseHandle(hStdOutFile);
+    }
 
     if (!ok) {
         DWORD err = GetLastError();

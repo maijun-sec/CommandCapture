@@ -43,6 +43,12 @@ AdapterRegistry::AdapterRegistry() {
     adapters_.push_back(adapters::makeKotlinAdapter());
     adapters_.push_back(adapters::makeScala3Adapter());
     adapters_.push_back(adapters::makeScala2Adapter());
+    // The .NET languages.
+    adapters_.push_back(adapters::makeCsharpAdapter());
+    // The Go toolchain. It comes before the fallback: the generic
+    // adapter knows nothing about export data or import
+    // configurations.
+    adapters_.push_back(adapters::makeGoAdapter());
     adapters_.push_back(adapters::makeGenericAdapter());
 }
 

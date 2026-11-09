@@ -33,6 +33,7 @@
 #include <unistd.h>
 #endif
 
+#include "build_cmd.h"
 #include "ccap_compdb.h"
 #include "cli.h"
 #include "core/event.h"
@@ -52,6 +53,7 @@ int cmdParse(const cli::Options& opts);
 int cmdShow(const cli::Options& opts);
 int cmdExport(const cli::Options& opts);
 int cmdTranslate(const cli::Options& opts);
+int cmdMap(const cli::Options& opts);
 }  // namespace compdb
 }  // namespace ccap
 
@@ -93,49 +95,6 @@ std::string agentCaptureDir(const ccap::cli::Options& cli) {
         return std::string();
     }
     return full;
-}
-
-std::string eventToJson(const CommandEvent& e) {
-    std::string j = "{";
-    j += ccap::jsonKvNum("seq", static_cast<int64_t>(e.seq));
-    j += ",";
-    j += ccap::jsonKvNum("timestamp_ms", e.timestampMs);
-    j += ",";
-    j += ccap::jsonKvStr("platform", ccap::platformName(e.platform));
-    j += ",";
-    j += ccap::jsonKvStr("source", ccap::sourceName(e.source));
-    j += ",";
-    j += ccap::jsonKvNum("pid", e.pid);
-    j += ",";
-    j += ccap::jsonKvNum("ppid", e.ppid);
-    j += ",";
-    j += ccap::jsonKvNum("depth", e.depth);
-    j += ",";
-    j += ccap::jsonKvStr("kind", e.kind);
-    j += ",";
-    j += ccap::jsonKvStr("executable", e.executable);
-    j += ",";
-    j += ccap::jsonKv("argv", ccap::jsonStringArray(e.argv));
-    j += ",";
-    j += ccap::jsonKvStr("command_line", e.rawCommandLine);
-    j += ",";
-    j += ccap::jsonKvStr("cwd", e.cwd);
-    j += ",";
-    j += ccap::jsonKvBool("is_builtin", e.isBuiltin);
-    j += ",";
-    j += ccap::jsonKvBool("resolved", e.resolved);
-    j += ",";
-    j += ccap::jsonKvBool("truncated", e.truncated);
-    j += ",";
-    j += ccap::jsonKvStr("script_path", e.scriptPath);
-    j += ",";
-    j += ccap::jsonKvNum("script_line", e.scriptLine);
-    j += ",";
-    j += ccap::jsonKvNum("exec_index", e.execIndex);
-    j += ",";
-    j += ccap::jsonKv("notes", ccap::jsonStringArray(e.notes));
-    j += "}";
-    return j;
 }
 
 std::string eventToText(const CommandEvent& e) {
@@ -311,6 +270,119 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    // ── the unified build entry ───────────────────────────────────────
+    //
+    // "ccap build <cmd> [args...]" -- run the build and produce a
+    // compile database from every language it uses.
+    if (cli.command == ccap::cli::Command::Build) {
+        if (cli.target.empty()) {
+            std::fprintf(stderr, "error: build needs a command\n");
+            return 2;
+        }
+
+        ccap::app::BuildOptions bopts;
+        bopts.cwd = cli.cwd;
+        bopts.timeoutMs = cli.timeoutMs;
+        bopts.quietMs = cli.quietMs;
+        bopts.agentJar = cli.agentJar;
+        bopts.agentCaptureDir = agentCaptureDir(cli);
+
+        // The plan options are the ones about the **compilers**: which
+        // backends will run, and where the diagnostic log comes from.
+        ccap::compdb::BuildOptions popts;
+        popts.msbuildLog = cli.buildMsbuildLog;
+        popts.msbuildArgs = cli.buildMsbuildArgs;
+        popts.noDotnet = cli.buildNoDotnet;
+
+        const ccap::compdb::BuildPlan plan =
+            ccap::compdb::planBuild(cli.target, cli.args, popts);
+
+        std::string events;
+        std::vector<std::string> notes;
+        auto cmds = ccap::app::runBuild(plan, bopts, popts, &events, &notes);
+
+        // The filters, the same ones the compdb path uses.
+        ccap::compdb::CompdbConfig config;
+        std::string cerr;
+        if (!cli.compdbConfig.empty()) {
+            if (!ccap::compdb::CompdbConfig::loadFile(cli.compdbConfig,
+                                                       &config, &cerr)) {
+                std::fprintf(stderr, "error: %s\n", cerr.c_str());
+                return 2;
+            }
+        }
+
+        ccap::compdb::FilterConfig fc =
+            ccap::compdb::FilterConfig::builtin();
+        for (const auto& n : config.filter.excludeNames) {
+            fc.excludeNames.push_back(n);
+        }
+        for (const auto& n : cli.compdbExclude) {
+            fc.excludeNames.push_back(n);
+        }
+        if (!config.filter.includeNames.empty()) {
+            fc.includeNames = config.filter.includeNames;
+        }
+        for (const auto& n : cli.compdbInclude) {
+            fc.includeNames.push_back(n);
+        }
+        ccap::compdb::FilterRules rules(fc);
+
+        std::vector<ccap::compdb::CompileCommand> kept;
+        for (const auto& c : cmds) {
+            if (rules.keep(c)) kept.push_back(c);
+        }
+
+        // The output.
+        std::string outPath = cli.buildOutput.empty() ? config.outputPath
+                                                       : cli.buildOutput;
+        std::string format = cli.buildFormat.empty() ? config.outputFormat
+                                                     : cli.buildFormat;
+
+        std::string content;
+        if (format == "translated") {
+            ccap::compdb::AdapterRegistry registry;
+            ccap::compdb::AdapterContext actx;
+            content = ccap::compdb::exportTranslatedCommands(kept, registry,
+                                                              actx);
+        } else if (format == "clang-cmd") {
+            content = ccap::compdb::exportClangCommands(kept);
+        } else {
+            content = ccap::compdb::exportClangCompilationDb(kept);
+        }
+
+        // The events, when they were asked for.
+        if (cli.buildEvents) {
+            std::fwrite(events.data(), 1, events.size(), stderr);
+        }
+
+        // The notes: what each backend did.
+        for (const auto& n : notes) {
+            std::fprintf(stderr, "[ccap] %s\n", n.c_str());
+        }
+
+        if (!outPath.empty() && outPath != "-") {
+            if (!ccap::writeFile(outPath, content)) {
+                std::fprintf(stderr, "error: cannot write %s\n", outPath.c_str());
+                return 3;
+            }
+            // The count is the number of entries that were **written**,
+            // not the number of commands that went in: a link-only
+            // command has no compilation unit, so the database exporter
+            // skips it.
+            size_t written = 0;
+            for (const auto& c : kept) {
+                if (!c.sourceFiles.empty()) ++written;
+            }
+            std::fprintf(stderr,
+                         "[ccap] wrote %zu compile command(s) to %s\n", written,
+                         outPath.c_str());
+        } else {
+            std::fwrite(content.data(), 1, content.size(), stdout);
+        }
+        return 0;
+    }
+
     // ── compdb subcommands ───────────────────────────────────────────
     if (cli.command == ccap::cli::Command::Compdb) {
         using namespace ccap::compdb;
@@ -327,6 +399,8 @@ int main(int argc, char** argv) {
                 return cmdExport(cli);
             case ccap::cli::CompdbCommand::Translate:
                 return cmdTranslate(cli);
+            case ccap::cli::CompdbCommand::Map:
+                return cmdMap(cli);
             case ccap::cli::CompdbCommand::Capture:
                 // capture needs to run a build -- reuse the capture
                 // capability of run, then hand the result to the compdb

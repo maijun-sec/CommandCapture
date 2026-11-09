@@ -21,6 +21,7 @@
 
 #include <cctype>
 
+#include "ccap_compdb_go.h"
 #include "core/command_line.h"
 #include "core/json_parser.h"
 #include "core/normalize.h"
@@ -246,7 +247,48 @@ CompileCommand CommandParser::parseArgv(const std::vector<std::string>& argv,
     }
     cmd.compilerBase = base;
 
-    cmd.kind = table_.matchBaseName(base);
+    // The kind is decided by the **path**, not by the base name alone.
+    //
+    // For every compiler whose name identifies it, the path makes no
+    // difference -- the base name decides, as it always did. For the Go
+    // toolchain it is the other way round: the tools are recognized by
+    // the shape of the directory they live in, because "compile" and
+    // "link" are too common as program names to match on.
+    cmd.kind = table_.matchPath(argv[0]);
+
+    // The .NET shape: "dotnet exec <sdk>/Roslyn/bincore/csc.dll ..."
+    //
+    // The .NET compilers are **libraries**, so they are never invoked
+    // directly: the build runs the "dotnet" host with "exec" and the
+    // compiler dll as the argument. So argv[0] is the host -- "dotnet"
+    // -- and the **compiler** is argv[2].
+    //
+    // Without this, a .NET compile is not recognized at all: the host
+    // is not a compiler, and the command looks like a program being
+    // run rather than a compilation.
+    //
+    // The check is on the HOST's name and the "exec" verb, so it
+    // cannot fire on a native command that happens to have a dll in
+    // it.
+    if (cmd.kind == CompilerKind::Unknown && argv.size() >= 3) {
+        std::string host = base;
+        for (auto& c : host) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        if ((host == "dotnet" || host == "msbuild" || host == "devenv") &&
+            argv[1] == "exec") {
+            const std::string dll = ccap::baseName(argv[2]);
+            std::string dllBase = dll;
+            const size_t dot = dllBase.rfind('.');
+            if (dot != std::string::npos) dllBase = dllBase.substr(0, dot);
+            const CompilerKind dllKind = table_.matchBaseName(dllBase);
+            if (dllKind != CompilerKind::Unknown &&
+                dllKind != CompilerKind::Generic) {
+                cmd.kind = dllKind;
+                cmd.compilerBase = dllBase;
+            }
+        }
+    }
 
     // Parse the path
     //
@@ -266,6 +308,30 @@ CompileCommand CommandParser::parseArgv(const std::vector<std::string>& argv,
     // (an explicit action).
     if (!argv[0].empty() && ccap::isAbsolutePath(argv[0])) {
         cmd.compilerPath = argv[0];
+    }
+
+    // ── The Go toolchain ───────────────────────────────────────────────
+    //
+    // The Go tools have their own option conventions, and they differ
+    // from the C ones in two ways that matter:
+    //
+    //   * a value may be attached ("-lang=go1.23") or separate
+    //     ("-p github.com/x/y/pkg"), and both occur in real command
+    //     lines;
+    //   * the operands come last -- the flag parsing stops at the
+    //     first operand, and the operands of a Go tool command are the
+    //     source files.
+    //
+    // A generic "-x <value>" loop cannot do that: it would have to
+    // guess whether an unknown flag takes a value, and guessing wrong
+    // swallows a source file. So the Go command line is parsed by its
+    // own parser, and the generic loop below is not used for it.
+    //
+    // The kind was decided above, by the path shape -- so by now it is
+    // known that this is one of the Go tools.
+    if (cmd.kind == CompilerKind::Go) {
+        parseGoArgv(argv, &cmd);
+        return cmd;
     }
 
     // ── Main loop: dispatch by option category ─────────────────────────

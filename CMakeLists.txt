@@ -191,8 +191,17 @@ add_library(ccap_compdb STATIC
   modules/ccap_compdb/compdb/filter_rules.cpp
   modules/ccap_compdb/compdb/compdb_exporter.cpp
   modules/ccap_compdb/compdb/clang_translator.cpp
+  modules/ccap_compdb/compdb/option_mapping.cpp
+  modules/ccap_compdb/compdb/registry.cpp
+  modules/ccap_compdb/compdb/resolution.cpp
+  modules/ccap_compdb/compdb/families.cpp
+  modules/ccap_compdb/compdb/dotnet_backend.cpp
+  modules/ccap_compdb/compdb/go_parser.cpp
+  modules/ccap_compdb/compdb/build_plan.cpp
   modules/ccap_compdb/compdb/config.cpp
   modules/ccap_compdb/adapters/adapter_registry.cpp
+  modules/ccap_compdb/adapters/csharp_adapter.cpp
+  modules/ccap_compdb/adapters/go_adapter.cpp
   modules/ccap_compdb/adapters/gcc_adapter.cpp
   modules/ccap_compdb/adapters/clang_adapter.cpp
   modules/ccap_compdb/adapters/msvc_adapter.cpp
@@ -220,8 +229,17 @@ add_library(ccap_compdb_shared SHARED
   modules/ccap_compdb/compdb/filter_rules.cpp
   modules/ccap_compdb/compdb/compdb_exporter.cpp
   modules/ccap_compdb/compdb/clang_translator.cpp
+  modules/ccap_compdb/compdb/option_mapping.cpp
+  modules/ccap_compdb/compdb/registry.cpp
+  modules/ccap_compdb/compdb/resolution.cpp
+  modules/ccap_compdb/compdb/families.cpp
+  modules/ccap_compdb/compdb/dotnet_backend.cpp
+  modules/ccap_compdb/compdb/go_parser.cpp
+  modules/ccap_compdb/compdb/build_plan.cpp
   modules/ccap_compdb/compdb/config.cpp
   modules/ccap_compdb/adapters/adapter_registry.cpp
+  modules/ccap_compdb/adapters/csharp_adapter.cpp
+  modules/ccap_compdb/adapters/go_adapter.cpp
   modules/ccap_compdb/adapters/gcc_adapter.cpp
   modules/ccap_compdb/adapters/clang_adapter.cpp
   modules/ccap_compdb/adapters/msvc_adapter.cpp
@@ -251,6 +269,7 @@ set(CCAP_SOURCES
   modules/ccap/app/main.cpp
   modules/ccap/app/cli.cpp
   modules/ccap/app/compdb_cmd.cpp
+  modules/ccap/app/build_cmd.cpp
 )
 
 add_executable(ccap ${CCAP_SOURCES})
@@ -311,6 +330,66 @@ if(MSVC)
   target_compile_options(test_compdb PRIVATE /utf-8)
 endif()
 add_test(NAME compdb COMMAND test_compdb)
+
+# 开关表 / 保留层级 的单元测试
+#
+# 映射引擎是决定 clang AST 和 LLVM BC 到底看见什么的那一层，
+# 所以给它单独的测试程序，而不是并进 test_compdb：
+# 两者关注点不同，一个失败不该掩盖另一个。
+add_executable(test_compdb_map tests/test_compdb_map.cpp)
+target_link_libraries(test_compdb_map PRIVATE ccap_compdb ccap_core)
+target_include_directories(test_compdb_map PRIVATE
+  ${CCAP_MODULES_DIR}/ccap_compdb
+  ${CCAP_MODULES_DIR}/ccap_compdb/include
+)
+if(MSVC)
+  target_compile_options(test_compdb_map PRIVATE /utf-8)
+endif()
+add_test(NAME compdb_map COMMAND test_compdb_map)
+
+# .NET 后端的单元测试
+#
+# 它读的是一份**真实的** MSBuild diagnostic log（截取到 Csc 任务那一行），
+# 不是合成的行：UTF-16 编码、未加引号的 exe 路径、任务 ID 注解，
+# 这三处都是真实日志的性质，合成行测不出来。
+add_executable(test_compdb_dotnet tests/test_compdb_dotnet.cpp)
+target_link_libraries(test_compdb_dotnet PRIVATE ccap_compdb ccap_core)
+target_include_directories(test_compdb_dotnet PRIVATE
+  ${CCAP_MODULES_DIR}/ccap_compdb
+  ${CCAP_MODULES_DIR}/ccap_compdb/include
+  ${CCAP_MODULES_DIR}/ccap_core
+)
+target_compile_definitions(test_compdb_dotnet PRIVATE
+  CCAP_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
+)
+if(MSVC)
+  target_compile_options(test_compdb_dotnet PRIVATE /utf-8)
+endif()
+add_test(NAME compdb_dotnet COMMAND test_compdb_dotnet)
+
+# Go 工具链的单元测试
+#
+# 它测的是**路径形状**的识别：Go 的 compile / link 必须按
+# <GOROOT>/pkg/tool/<goos>_<goarch>/ 认，而一个恰好叫 compile 或
+# link 的别的程序**不能**被认成 Go 工具。
+#
+# 这条规则错了不会只是"多了一条记录"：认错了以后，那条命令会按 Go
+# 的选项语法去解析，"-o" / "-p" 的意思完全不一样，出来的记录是错的。
+# 所以它单独一个测试程序。
+add_executable(test_compdb_go tests/test_compdb_go.cpp)
+target_link_libraries(test_compdb_go PRIVATE ccap_compdb ccap_core)
+target_include_directories(test_compdb_go PRIVATE
+  ${CCAP_MODULES_DIR}/ccap_compdb
+  ${CCAP_MODULES_DIR}/ccap_compdb/include
+  ${CCAP_MODULES_DIR}/ccap_core
+)
+target_compile_definitions(test_compdb_go PRIVATE
+  CCAP_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
+)
+if(MSVC)
+  target_compile_options(test_compdb_go PRIVATE /utf-8)
+endif()
+add_test(NAME compdb_go COMMAND test_compdb_go)
 
 # JVM agent 注入 + 两份视图合并 的单元测试
 #

@@ -33,6 +33,35 @@ std::string absolutize(const std::string& path, const std::string& directory) {
     return ccap::normalizePath(directory + "/" + path);
 }
 
+// Join the arguments into one command line.
+//
+// A token is quoted only when it actually needs it. The rule is the
+// shell's: a token with a space, a quote or a tab in it needs the
+// quotes; everything else is emitted bare.
+//
+// The backslash and the quote are escaped inside the quotes, because
+// the command line has to survive a round trip through a shell.
+std::string joinCommandLine(const std::vector<std::string>& args) {
+    std::string out;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (i) out += ' ';
+        const std::string& a = args[i];
+        bool needsQuote = a.empty() ||
+                          a.find_first_of(" \t\"'") != std::string::npos;
+        if (needsQuote) {
+            out += '"';
+            for (char c : a) {
+                if (c == '"' || c == '\\') out += '\\';
+                out += c;
+            }
+            out += '"';
+        } else {
+            out += a;
+        }
+    }
+    return out;
+}
+
 }  // namespace
 
 std::string exportClangCompilationDb(const std::vector<CompileCommand>& commands) {
@@ -102,7 +131,24 @@ std::string exportTranslatedCommands(const std::vector<CompileCommand>& commands
     std::string out;
 
     for (const auto& cmd : commands) {
-        if (cmd.sourceFiles.empty()) continue;
+        // A command without sources is a link, and a link has no
+        // compilation unit.
+        //
+        // The Go link step is the exception, and it is kept **because**
+        // it has no sources: its "-importcfg" is the authoritative
+        // statement of which packages are in the binary, and that
+        // answer exists nowhere else. The compile steps only say what
+        // each package imports.
+        //
+        // Dropping it would throw the authoritative answer away, so
+        // the line is emitted -- the export data of every package in
+        // the binary, and the path of the manifest that pairs them
+        // with their import paths.
+        if (cmd.sourceFiles.empty() &&
+            !(cmd.kind == CompilerKind::Go &&
+              !cmd.importConfigPath.empty())) {
+            continue;
+        }
 
         const CompilerAdapter* adapter = registry.find(cmd);
         if (!adapter) continue;
@@ -155,24 +201,93 @@ std::string exportClangCommands(const std::vector<CompileCommand>& commands) {
         std::vector<std::string> args = toClangCommand(cmd);
         if (args.empty()) continue;
 
-        for (size_t i = 0; i < args.size(); ++i) {
-            if (i) out += ' ';
-            // Quote only when the token actually needs it.
-            bool needsQuote = args[i].empty() ||
-                              args[i].find_first_of(" \t\"'") != std::string::npos;
-            if (needsQuote) {
-                out += '"';
-                for (char c : args[i]) {
-                    if (c == '"' || c == '\\') out += '\\';
-                    out += c;
-                }
-                out += '"';
-            } else {
-                out += args[i];
-            }
-        }
+        out += joinCommandLine(args);
         out += '\n';
     }
+    return out;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// The level-aware clang command export
+// ═══════════════════════════════════════════════════════════════════════════
+
+std::vector<std::string> exportClangCommandLines(
+    const std::vector<CompileCommand>& commands,
+    const OptionMapper& mapper,
+    TranslateLevel level,
+    std::vector<MappingReport>* reports) {
+    std::vector<std::string> out;
+    for (const auto& cmd : commands) {
+        if (cmd.sourceFiles.empty()) continue;   // a pure link has no unit
+
+        MappingReport report;
+        std::vector<std::string> args = mapper.map(cmd, level, &report);
+        if (args.empty()) continue;
+
+        out.push_back(joinCommandLine(args));
+        if (reports) reports->push_back(report);
+    }
+    return out;
+}
+
+std::string exportClangCommandLinesText(
+    const std::vector<CompileCommand>& commands,
+    const OptionMapper& mapper,
+    TranslateLevel level) {
+    std::vector<std::string> lines =
+        exportClangCommandLines(commands, mapper, level, nullptr);
+
+    std::string out;
+    for (const auto& l : lines) {
+        out += l;
+        out += '\n';
+    }
+    return out;
+}
+
+std::string exportMappingReports(
+    const std::vector<CompileCommand>& commands,
+    const OptionMapper& mapper,
+    TranslateLevel level) {
+    std::string out;
+    out += "retention level: ";
+    out += translateLevelName(level);
+    out += "\n";
+
+    for (const auto& cmd : commands) {
+        if (cmd.sourceFiles.empty()) continue;
+
+        MappingReport report;
+        mapper.map(cmd, level, &report);
+
+        out += "\n--- ";
+        out += cmd.compilerBase;
+        if (!cmd.sourceFiles.empty()) {
+            out += " ";
+            out += cmd.sourceFiles.front();
+        }
+        out += "\n";
+
+        out += report.toText();
+
+        if (!report.unknown.empty()) {
+            out += "  unknown options (not in the switch table): ";
+            for (size_t i = 0; i < report.unknown.size(); ++i) {
+                if (i) out += ", ";
+                out += report.unknown[i];
+            }
+            out += "\n";
+        }
+        if (!report.noEquivalent.empty()) {
+            out += "  no clang equivalent: ";
+            for (size_t i = 0; i < report.noEquivalent.size(); ++i) {
+                if (i) out += ", ";
+                out += report.noEquivalent[i];
+            }
+            out += "\n";
+        }
+    }
+
     return out;
 }
 

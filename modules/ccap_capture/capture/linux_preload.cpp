@@ -408,11 +408,39 @@ CaptureResult runLinuxPreload(const RunOptions& opts,
             }
         }
 
+        // The MSBuild diagnostic log.
+        //
+        // MSBuild reads the log file path from MSBUILDLOGTEXT. The
+        // environment is inherited by every process the target starts,
+        // so one injection covers the whole tree -- and the build
+        // command itself is not touched.
+        if (!opts.msbuildLogFile.empty()) {
+            setenv("MSBUILDLOGTEXT", opts.msbuildLogFile.c_str(), 1);
+        }
+
         // Redirect stdout to stderr (optional) --
         // ccap's own stdout keeps only the capture data, so the JSON can be
         // consumed directly from a pipe.
         if (opts.redirectOutputToStderr) {
             dup2(STDERR_FILENO, STDOUT_FILENO);
+        }
+
+        // Redirect stdout to a file.
+        //
+        // The MSBuild diagnostic log is written to stdout, in UTF-16,
+        // and the bytes have to reach a file untouched -- so this
+        // redirect is **exclusive** with the stderr redirect above.
+        //
+        // The file is opened with O_TRUNC and the fd is dup2'd onto
+        // stdout, so the child writes into it directly and nothing is
+        // buffered on the way.
+        if (!opts.stdoutFile.empty()) {
+            int fd = ::open(opts.stdoutFile.c_str(), O_WRONLY | O_CREAT | O_TRUNC,
+                            0644);
+            if (fd >= 0) {
+                dup2(fd, STDOUT_FILENO);
+                if (fd != STDOUT_FILENO) ::close(fd);
+            }
         }
 
         // Target command line

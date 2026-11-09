@@ -59,6 +59,89 @@ std::string stripExe(const std::string& s) {
     return s;
 }
 
+// Split a path into its segments.
+//
+// Both separators are accepted, because a captured command line can
+// carry either: the Go toolchain writes the path the way the platform
+// does, and a build log written on Windows and read on Linux (or the
+// other way round) mixes them.
+std::vector<std::string> splitPathSegments(const std::string& path) {
+    std::vector<std::string> out;
+    std::string cur;
+    for (char c : path) {
+        if (c == '/' || c == '\\') {
+            if (!cur.empty()) out.push_back(cur);
+            cur.clear();
+        } else {
+            cur += c;
+        }
+    }
+    if (!cur.empty()) out.push_back(cur);
+    return out;
+}
+
+// Match one path segment against one segment pattern.
+//
+// '*' matches any run of characters, '?' matches exactly one.
+//
+// WHY THE MATCH FOLLOWS THE PLATFORM'S CASE RULES
+//
+//   The repository's own glob matcher (globMatch in registry.cpp) is
+//   case-insensitive, which is right for an executable **name** -- the
+//   tools spell their names in one case only, and Windows is
+//   case-insensitive anyway.
+//
+//   A path is a different thing: on Linux "/opt/Go/pkg/tool" and
+//   "/opt/go/pkg/tool" are two different directories, and only one of
+//   them is the toolchain. So the segment comparison follows the
+//   platform: case-insensitive on Windows, case-sensitive elsewhere.
+bool matchSegment(const std::string& segment, const std::string& pattern) {
+    // A pattern without a wildcard is a plain comparison.
+    if (pattern.find('*') == std::string::npos &&
+        pattern.find('?') == std::string::npos) {
+#if defined(_WIN32)
+        return lower(segment) == lower(pattern);
+#else
+        return segment == pattern;
+#endif
+    }
+
+    // The wildcard match: the classic two-pointer scan with one
+    // backtrack point (no recursion, so no exponential blow-up).
+    size_t p = 0, t = 0;
+    size_t starP = std::string::npos, starT = 0;
+
+    auto sameChar = [](char a, char b) {
+#if defined(_WIN32)
+        return std::tolower(static_cast<unsigned char>(a)) ==
+               std::tolower(static_cast<unsigned char>(b));
+#else
+        return a == b;
+#endif
+    };
+
+    while (t < segment.size()) {
+        // The wildcard is tested first, so that a '*' inside the
+        // segment is never taken for a literal.
+        if (p < pattern.size() && pattern[p] == '*') {
+            starP = p++;
+            starT = t;
+        } else if (p < pattern.size() &&
+                   (pattern[p] == '?' || sameChar(pattern[p], segment[t]))) {
+            ++p;
+            ++t;
+        } else if (starP != std::string::npos) {
+            p = starP + 1;
+            t = ++starT;
+        } else {
+            return false;
+        }
+    }
+
+    while (p < pattern.size() && pattern[p] == '*') ++p;
+    return p == pattern.size();
+}
+
 }  // namespace
 
 const char* compilerKindName(CompilerKind kind) {
@@ -73,6 +156,10 @@ const char* compilerKindName(CompilerKind kind) {
         case CompilerKind::Kotlin:  return "kotlin";
         case CompilerKind::Scala3:  return "scala3";
         case CompilerKind::Scala2:  return "scala2";
+        case CompilerKind::Csharp:  return "csharp";
+        case CompilerKind::VbNet:   return "vbnet";
+        case CompilerKind::FSharp:  return "fsharp";
+        case CompilerKind::Go:      return "go";
         default:                    return "unknown";
     }
 }
@@ -95,6 +182,15 @@ bool compilerKindFromName(const std::string& name, CompilerKind* out) {
     if (l == "kotlin" || l == "kotlinc") { *out = CompilerKind::Kotlin; return true; }
     if (l == "scala3" || l == "scala") { *out = CompilerKind::Scala3; return true; }
     if (l == "scala2") { *out = CompilerKind::Scala2; return true; }
+    // The .NET languages. The names match the driver the .NET backend
+    // records, so the two can be joined without a mapping table.
+    if (l == "csharp" || l == "csc") { *out = CompilerKind::Csharp; return true; }
+    if (l == "vbnet" || l == "vbc")   { *out = CompilerKind::VbNet;  return true; }
+    if (l == "fsharp" || l == "fsc")  { *out = CompilerKind::FSharp; return true; }
+    // The Go toolchain. The name is the language, not the tool: the
+    // tools themselves ("compile", "link") are recognized by their
+    // path -- see the "go" rule in CompilerTable::builtin().
+    if (l == "go" || l == "golang")   { *out = CompilerKind::Go;      return true; }
     if (l == "unknown") { *out = CompilerKind::Unknown; return true; }
     return false;
 }
@@ -127,6 +223,44 @@ bool CompilerRule::matchesBaseName(const std::string& base) const {
     for (const auto& s : suffixRules) {
         if (b.size() > s.size() && b.compare(b.size() - s.size(), s.size(), s) == 0) {
             return true;
+        }
+    }
+
+    return false;
+}
+
+bool CompilerRule::matchesPath(const std::string& path) const {
+    if (pathShapes.empty()) return false;
+
+    const std::vector<std::string> segs = splitPathSegments(path);
+    if (segs.size() < 2) return false;   // a shape needs a directory and a name
+
+    const std::string& file = segs.back();
+
+    for (const auto& shape : pathShapes) {
+        const std::vector<std::string> pat = splitPathSegments(shape);
+        if (pat.size() < 2) continue;    // a shape needs a directory and a name
+
+        // The last segment of the shape is the executable name.
+        if (!matchSegment(stripExe(file), pat.back())) continue;
+
+        // The directory segments of the shape must appear, in order and
+        // without a gap, somewhere in the path.
+        //
+        // The file name is not part of that search: it is the segment
+        // after the ones the shape names.
+        const size_t dirs = pat.size() - 1;
+        if (segs.size() - 1 < dirs) continue;
+
+        for (size_t start = 0; start + dirs <= segs.size() - 1; ++start) {
+            bool ok = true;
+            for (size_t i = 0; i < dirs; ++i) {
+                if (!matchSegment(segs[start + i], pat[i])) {
+                    ok = false;
+                    break;
+                }
+            }
+            if (ok) return true;
         }
     }
 
@@ -246,6 +380,94 @@ CompilerTable CompilerTable::builtin() {
         t.addRule(r);
     }
 
+    // ── The .NET languages ─────────────────────────────────────────────
+    //
+    // The Roslyn drivers are **never** invoked directly on the command
+    // line: the build runs "dotnet exec <sdk>/Roslyn/bincore/csc.dll".
+    // So the executable name alone never identifies them -- the .dll
+    // name does.
+    //
+    // That is why the .NET backend does not rely on this table to
+    // recognize a compile: it knows what it extracted. The rules are
+    // here so that a command line captured from a build log -- where
+    // the driver may appear as "csc.exe" or as "csc" -- is still
+    // recognized as a compile command.
+    {
+        CompilerRule r;
+        r.kind = CompilerKind::Csharp;
+        r.id = "csharp";
+        r.exactNames = { "csc", "csc.exe" };
+        // The dll is matched as a suffix: the command line spells it
+        // with a full path ("<sdk>/Roslyn/bincore/csc.dll"), and the
+        // suffix rule matches the tail of the name.
+        r.suffixRules = { "csc.dll" };
+        t.addRule(r);
+    }    {
+        CompilerRule r;
+        r.kind = CompilerKind::VbNet;
+        r.id = "vbnet";
+        r.exactNames = { "vbc", "vbc.exe" };
+        r.suffixRules = { "vbc.dll" };
+        t.addRule(r);
+    }
+    {
+        CompilerRule r;
+        r.kind = CompilerKind::FSharp;
+        r.id = "fsharp";
+        r.exactNames = { "fsc", "fsc.exe" };
+        r.suffixRules = { "fsc.dll" };
+        t.addRule(r);
+    }
+
+    // ── The Go toolchain ──────────────────────────────────────────────
+    //
+    // The two tools that matter are "compile" (one package -> one
+    // archive) and "link" (the archives -> the binary).
+    //
+    // WHY THE RULE HAS NO NAMES
+    //
+    //   "compile" and "link" are ordinary program names. A name rule
+    //   would recognize an unrelated tool that happens to be called
+    //   "link" -- and the consequence is not cosmetic: the command
+    //   would be handed to the Go parser, where "-o" and "-p" mean
+    //   something completely different, and the build record would be
+    //   wrong in a way nobody could see.
+    //
+    //   So the rule matches the **path**: the Go tools always live in
+    //   the "pkg/tool/<goos>_<goarch>" directory of the toolchain.
+    //
+    // WHY ONLY THESE TWO
+    //
+    //   The same directory holds other tools -- "asm" (the assembler),
+    //   "cgo", "pack", "vet", "asmhdr". They are deliberately **not**
+    //   recognized here:
+    //
+    //     * the assembler is not a compilation of the project's own
+    //       sources, and the default filter is supposed to drop it;
+    //     * "cgo" generates code, it does not compile the package;
+    //     * "pack" archives, "vet" analyses.
+    //
+    //   Recognizing them would make the filter keep commands that have
+    //   nothing to do with the source tree.
+    {
+        CompilerRule r;
+        r.kind = CompilerKind::Go;
+        r.id = "go";
+        r.exactNames = {};
+        // The toolchain directory is named "<goos>_<goarch>": two
+        // non-empty parts joined by an underscore ("linux_amd64",
+        // "windows_amd64", "darwin_arm64", "js_wasm").
+        //
+        // The pattern spells that as "?*_*?": at least one character,
+        // then an underscore, then at least one character. The '?'s
+        // are what keep an empty side ("_") from matching.
+        r.pathShapes = {
+            "pkg/tool/?*_*?/compile",
+            "pkg/tool/?*_*?/link",
+        };
+        t.addRule(r);
+    }
+
     // ── Fallback ───────────────────────────────────────────────────────
     {
         CompilerRule r;
@@ -316,6 +538,17 @@ CompilerKind CompilerTable::matchBaseName(const std::string& base) const {
 }
 
 CompilerKind CompilerTable::matchPath(const std::string& path) const {
+    // The path-shape rules first.
+    //
+    // They are the only rules that can tell two executables with the
+    // same name apart, so they have to be tried before the name rules:
+    // a name rule that matched first would decide the question the
+    // path shape exists to answer.
+    for (const auto& r : rules_) {
+        if (r.matchesPath(path)) return r.kind;
+    }
+
+    // Otherwise the base name decides -- which is what this always did.
     std::string base = path;
     size_t slash = base.find_last_of("/\\");
     if (slash != std::string::npos) base = base.substr(slash + 1);

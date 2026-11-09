@@ -551,8 +551,9 @@ void testAdapters() {
     // Adapter count
     //
     // Four native adapters (gcc, clang, msvc, generic) plus the five
-    // JVM ones (javac, ecj, kotlin, scala3, scala2).
-    check("registry has 9 adapters", reg.all().size() == 9,
+    // JVM ones (javac, ecj, kotlin, scala3, scala2) plus the .NET one
+    // (csharp) plus the Go one (go).
+    check("registry has 11 adapters", reg.all().size() == 11,
           "actual=" + std::to_string(reg.all().size()));
 }
 
